@@ -85,5 +85,6 @@ div.tab-content {
   height: 90%;
   width: 100vw;
   background-color: colors.$background-light;
+  padding: 20px;
 }
 </style>
