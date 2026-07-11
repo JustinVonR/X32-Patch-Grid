@@ -1,31 +1,60 @@
 use std::sync::Mutex;
-use std::thread;
-use std::time::Duration;
-use tauri::{Builder, Manager, State};
-use x32_osc::{X32Console, ConnectionManager};
+use tauri::{Manager, State};
+use x32_osc::{ConnectionList, ConnectionManager};
 
 struct AppData {
     osc_cons: ConnectionManager
 }
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+async fn scan(state: State<'_, Mutex<AppData>>) -> Result<ConnectionList, String> {
+    match state.inner().lock() {
+        Ok(mut app_data) => {
+            app_data.osc_cons.scan();
+            Ok(app_data.osc_cons.get_connection_list())
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
 }
 
 #[tauri::command]
-fn scan(state: State<'_, Mutex<AppData>>) -> Vec<X32Console> {
-    println!("Scanning for boards!");
-    // TODO: Change this to no longer use unwrap
-    let results = state.inner().lock().unwrap().osc_cons.scan();
-    results
+async fn get_connections(state: State<'_, Mutex<AppData>>) -> Result<ConnectionList, String> {
+    match state.inner().lock() {
+        Ok(app_data) => {
+            Ok(app_data.osc_cons.get_connection_list())
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
 }
 
 #[tauri::command]
-fn connect_console(id: usize) -> Result<(), String> {
-    println!("Requested connection to {id}");
-    thread::sleep(Duration::from_secs(5));
-    Ok(())
+fn connect(state: State<'_, Mutex<AppData>>, id: u32) -> Result<(), String> {
+    match state.inner().lock() {
+        Ok(mut app_data) => {
+            app_data.osc_cons.connect(id)?;
+            Ok(())
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn disconnect(state: State<'_, Mutex<AppData>>) -> Result<(), String> {
+    match state.inner().lock() {
+        Ok(mut app_data) => {
+            app_data.osc_cons.disconnect();
+            Ok(())
+        },
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,7 +67,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, scan, connect_console])
+        .invoke_handler(tauri::generate_handler![scan, connect, disconnect, get_connections])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

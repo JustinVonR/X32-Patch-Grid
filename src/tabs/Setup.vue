@@ -5,21 +5,46 @@ import {invoke} from '@tauri-apps/api/core';
 
 let consoleOptions = ref([]);
 
-let selectedId = ref(null)
-let connectingId = ref(null)
+let connectedId = ref(null)
+let handlingId = ref(null)
 let scanning = ref(false)
 
 async function connect_console(id) {
-  connectingId.value = id;
+  handlingId.value = id;
 
   try {
-    await invoke('connect_console', {id: id})
-    selectedId.value = id;
+    await invoke('connect', {id: id})
+    connectedId.value = id;
+    console.log(`Connected to: ${connectedId.value}`)
   } catch (err) {
     console.log(`Couldn't connect to console: ${err}`)
   }
 
-  connectingId.value = null;
+  handlingId.value = null;
+}
+
+async function disconnect() {
+  handlingId.value = connectedId.value;
+
+  try {
+    await invoke('disconnect')
+    connectedId.value = null;
+  } catch (err) {
+    console.log(`Couldn't disconnect: ${err}`)
+  }
+
+  handlingId.value = null;
+}
+
+function parseConnections(connectionList) {
+  let consoleList = connectionList.consoles
+
+  for (let i = 0; i < consoleList.length; i++) {
+    consoleList[i].connecting = false;
+  }
+
+  consoleOptions.value = reactive(consoleList);
+  connectedId.value = connectionList.connected_id;
 }
 
 async function scan() {
@@ -28,16 +53,18 @@ async function scan() {
   // Returns list of console options
   let results = await invoke('scan', {});
 
-  // Add connecting field, only relevant to front-end
-  for (let i = 0; i < results.length; i++) {
-    results[i].connecting = false;
-  }
-
-  consoleOptions.value = reactive(results);
+  parseConnections(results);
 
   scanning.value = false;
 }
 
+async function getConnections() {
+  let results = await invoke('get_connections');
+
+  parseConnections(results);
+}
+
+getConnections();
 scan();
 
 </script>
@@ -64,7 +91,7 @@ scan();
       <tr
         v-for="(option, index) in consoleOptions"
         @click="connect_console(option.id, index)"
-        :class="{selected: (selectedId === option.id)}"
+        :class="{selected: (connectedId === option.id)}"
       >
         <td>{{option.model}}</td>
         <td>{{option.ip}}</td>
@@ -73,14 +100,20 @@ scan();
             style="justify-content: center; display: flex"
         >
           <!--Show connecting spinner if connecting to this option-->
-          <div :class="{connecting: (connectingId === option.id)}"></div>
+          <div :class="{connecting: (handlingId === option.id)}"></div>
         </td>
       </tr>
     </tbody>
   </table>
-  <button
-    @click="scan()"
-  >Scan Again</button>
+  <div class="controls">
+    <button
+        @click="scan()"
+    >Scan Again</button>
+    <button
+        :disabled="connectedId == null"
+        @click="disconnect()"
+    >Disconnect</button>
+  </div>
 </template>
 
 <style scoped lang="scss">
@@ -159,7 +192,12 @@ scan();
     }
   }
 
-  button {
+  div.controls {
     margin-top: 8px;
+    display: flex;
+  }
+
+  button {
+    margin-right: 8px;
   }
 </style>

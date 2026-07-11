@@ -1,7 +1,7 @@
 mod types;
 mod connections;
 
-pub use types::X32Console;
+pub use types::*;
 pub use connections::ConnectionManager;
 
 #[cfg(test)]

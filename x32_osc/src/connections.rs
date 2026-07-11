@@ -1,11 +1,17 @@
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
+
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
 use std::thread::sleep;
 use std::time::Duration;
 
-use crate::X32Console;
+use rand::RngExt;
 
+
+use crate::{ConnectionList, X32Console};
+
+//------------------------------ Private Connection Management Types ---------------------------//
 #[derive(Debug)]
 struct OscInterface {
     ip: IpAddr,
@@ -29,16 +35,12 @@ struct OscSocket {
     interface: OscInterface,
 }
 
-impl PartialEq for X32Console {
-    fn eq(&self, other: &Self) -> bool {
-        self.model == other.model && self.ip == other.ip && self.version == other.version
-    }
-}
+//------------------------------ Define Connection Manager Object ------------------------------//
 
 pub struct ConnectionManager {
     network_interfaces: Vec<OscInterface>,
-    open_sockets: Vec<OscSocket>,
-    id_counter: usize,
+    connected_id: Option<u32>,
+    discovered: HashMap<u32, X32Console>,
 }
 
 impl ConnectionManager {
@@ -47,17 +49,38 @@ impl ConnectionManager {
 
         ConnectionManager {
             network_interfaces: itfs,
-            open_sockets: Vec::new(),
-            id_counter: 0,
+            connected_id: None,
+            discovered: HashMap::new(),
         }
     }
-    pub fn scan(&mut self) -> Vec<X32Console> {
-        println!("Scanning in connection manager!");
+
+    pub fn get_connection_list(&self) -> ConnectionList {
+        ConnectionList {
+            consoles: self.discovered.values().cloned().collect(),
+            connected_id: match &self.connected_id {
+                Some(id) => Some(id.clone()),
+                None => None,
+            }
+        }
+    }
+
+    pub fn scan(&mut self) {
+        // Reset List of Discovered Consoles
+        if let Some(connected_id) = self.connected_id {
+            self.discovered.retain(|&id, _| {
+                id == connected_id
+            });
+        } else {
+            self.discovered.clear();
+        }
+
+        // Open Sockets for Scanning
+        let mut open_sockets: Vec<OscSocket> = Vec::new();
+
         for itf in &self.network_interfaces {
-            //TODO: Starter, this will need to be improved, including checking if something is already open
             match bind_and_config(itf.ip) {
                 Ok(sock) => {
-                    self.open_sockets.push(OscSocket {
+                    open_sockets.push(OscSocket {
                         socket: sock,
                         interface: itf.clone(),
                     });
@@ -68,18 +91,18 @@ impl ConnectionManager {
             }
         }
 
+        // Create xinfo message to get console IP responses
         let Ok(scan_packet) = encoder::encode(&OscPacket::Message(OscMessage {
             addr: String::from("/xinfo"),
             args: Vec::new(),
         })) else {
             println!("Failed to create scanning packet; Returning empty list.");
-            return Vec::new();
+            return;
         };
 
-        let mut results: Vec<X32Console> = Vec::new();
-
+        // Send out scanning packet and make list of unique responses
         for _ in 0..5 {
-            for osc_sock in &self.open_sockets {
+            for osc_sock in &open_sockets {
                 let addr = match osc_sock.interface.broadcast {
                     IpAddr::V4(ipv4) => {
                         SocketAddr::V4(SocketAddrV4::new(ipv4, 10023))
@@ -101,25 +124,50 @@ impl ConnectionManager {
 
             sleep(Duration::from_secs(1));
 
-            for osc_sock in &self.open_sockets {
+            for osc_sock in &open_sockets {
                 let sock = &osc_sock.socket;
                 let mut recv_buf: [u8; 1024] = [0; 1024];
                 let Ok(num_bytes) = sock.recv(&mut recv_buf) else {
                     continue;
                 };
-                let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], &self.id_counter) else {
+                let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], &self.gen_id()) else {
                     continue;
                 };
-                if !results.contains(&console) {
-                    self.id_counter += 1;
-                    results.push(console);
+                let discovered_consoles: Vec<&X32Console> = self.discovered.values().collect();
+                if !discovered_consoles.contains(&&console) {
+                    self.discovered.insert(console.id, console);
                 }
             }
         }
+    }
+    
+    pub fn connect(&mut self, id: u32) -> Result<(), String> {
+        if self.discovered.contains_key(&id) {
+            self.connected_id = Some(id);
+        }
+        Ok(())
+    }
+    
+    pub fn disconnect(&mut self) {
+        self.connected_id = None;
+    }
 
-        results
+    fn gen_id(&self) -> u32 {
+        // Probably this isn't the best way of generating unique IDs, but it should
+        // be okay here
+        let mut rng = rand::rng();
+
+        let mut rand = rng.random::<u32>();
+        while self.discovered.contains_key(&rand) {
+            rand = rng.random::<u32>();
+        }
+
+        rand
     }
 }
+
+
+//------------------------------ Private Helper Functions --------------------------------------//
 
 fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
     let new_sock = UdpSocket::bind(SocketAddr::new(ip, 0))?;
@@ -128,7 +176,7 @@ fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
     Ok(new_sock)
 }
 
-fn parse_xinfo (bytes: &[u8], board_id: &usize) -> Result<X32Console, OscError> {
+fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, OscError> {
     let (_, osc_packet) = decoder::decode_udp(bytes)?;
     let OscPacket::Message(mut osc_message) = osc_packet else {
         return Err(OscError::BadMessage("Expected an individual message as an xinfo response"));
