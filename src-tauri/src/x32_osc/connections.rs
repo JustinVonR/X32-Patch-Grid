@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use rand::RngExt;
 
-
-use crate::{ConnectionList, X32Console};
+use super::{X32Console, ConnectionList};
 
 //------------------------------ Private Connection Management Types ---------------------------//
 #[derive(Debug)]

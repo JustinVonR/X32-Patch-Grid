@@ -1,3 +1,5 @@
+mod x32_osc;
+
 use std::sync::Mutex;
 use tauri::{Manager, State};
 use x32_osc::{ConnectionList, ConnectionManager};

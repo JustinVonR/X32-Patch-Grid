@@ -5086,22 +5086,14 @@ dependencies = [
 name = "x32-patch-grid"
 version = "0.1.0"
 dependencies = [
+ "network-interface",
+ "rand",
+ "rosc",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
- "x32_osc",
-]
-
-[[package]]
-name = "x32_osc"
-version = "0.1.0"
-dependencies = [
- "network-interface",
- "rand",
- "rosc",
- "serde",
 ]
 
 [[package]]
