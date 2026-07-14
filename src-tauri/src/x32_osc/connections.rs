@@ -3,6 +3,7 @@ use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -53,8 +54,8 @@ struct OscSocket {
 
 pub struct ConnectionManager {
     network_interfaces: Vec<NetInterface>,
-    connected_id: Option<u32>,
-    discovered: HashMap<u32, X32Console>,
+    connected_id: Arc<Mutex<Option<u32>>>,
+    discovered: Arc<Mutex<HashMap<u32, X32Console>>>,
 }
 
 impl ConnectionManager {
@@ -63,38 +64,35 @@ impl ConnectionManager {
 
         ConnectionManager {
             network_interfaces: itfs,
-            connected_id: None,
-            discovered: HashMap::new(),
+            connected_id: Arc::new(Mutex::new(None)),
+            discovered: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn get_connection_list(&self) -> ConnectionList {
-        ConnectionList {
-            consoles: self.discovered.values().cloned().collect(),
-            connected_id: match &self.connected_id {
-                Some(id) => Some(id.clone()),
-                None => None,
+    pub async fn get_connection_list(&self) -> ConnectionList {
+        if let (Ok(discovered), Ok(connected_id)) = (self.discovered.lock(), self.connected_id.lock()) {
+            ConnectionList {
+                consoles: discovered.values().cloned().collect(),
+                connected_id: match *connected_id {
+                    Some(id) => Some(id.clone()),
+                    None => None,
+                }
+            }
+        } else {
+            ConnectionList {
+                consoles: Vec::new(),
+                connected_id: None,
             }
         }
     }
 
-    pub async fn scan(&mut self) {
-        // Reset List of Discovered Consoles
-        if let Some(connected_id) = self.connected_id {
-            self.discovered.retain(|&id, _| {
-                id == connected_id
-            });
-        } else {
-            self.discovered.clear();
-        }
-
+    pub async fn scan(&self) {
         // Open Sockets for Scanning
         let mut open_sockets: Vec<OscSocket> = Vec::new();
 
         for itf in &self.network_interfaces {
             match bind_and_config(itf.ip).await {
                 Ok(sock) => {
-                    println!("Bound to: {}", sock.local_addr().unwrap());
                     open_sockets.push(OscSocket {
                         socket: sock,
                         interface: itf.clone(),
@@ -114,6 +112,8 @@ impl ConnectionManager {
             println!("Failed to create scanning packet; Returning empty list.");
             return;
         };
+
+        let mut last_scan_ids: Vec<u32> = Vec::new();
 
         // Send out scanning packet and make list of unique responses
         for _ in 0..5 {
@@ -145,39 +145,73 @@ impl ConnectionManager {
                 let Ok(num_bytes) = sock.try_recv(&mut recv_buf) else {
                     continue;
                 };
-                let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], &self.gen_id()) else {
-                    continue;
-                };
-                let discovered_consoles: Vec<&X32Console> = self.discovered.values().collect();
-                if !discovered_consoles.contains(&&console) {
-                    self.discovered.insert(console.id, console);
+                // Only proceed to add board if we can make an ID for it
+                if let Ok(id) = &self.gen_id() {
+                    // Skip if unable to parse packet data
+                    let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], id) else {
+                        continue;
+                    };
+                    // Skip if unable to lock Mutex on discovery list
+                    if let Ok(mut discovered) = self.discovered.lock() {
+                        let discovered_consoles: Vec<&X32Console> = discovered.values().collect();
+                        // Mark ID as seen this scan cycle
+                        last_scan_ids.push(console.id);
+                        // Skip adding if already present
+                        if !discovered_consoles.contains(&&console) {
+                            discovered.insert(console.id, console);
+                        }
+
+                        drop(discovered);
+                    }
                 }
             }
         }
+
+        // Remove options not seen this scan unless currently connected
+        if let (Ok(mut discovered), Ok(connected_id)) = (self.discovered.lock(), self.connected_id.lock()) {
+            discovered.retain(|&k, _| {
+                last_scan_ids.contains(&k) || (connected_id.is_some() && k == connected_id.unwrap())
+            })
+        }
+
     }
     
-    pub fn connect(&mut self, id: u32) -> Result<(), String> {
-        if self.discovered.contains_key(&id) {
-            self.connected_id = Some(id);
+    pub fn connect(&self, id: u32) -> Result<(), String> {
+        let (Ok(discovered), Ok(mut connected_id)) = (self.discovered.lock(), self.connected_id.lock()) else {
+            return Err("Unable to lock Mutex for Connection".to_string());
+        };
+
+        if discovered.contains_key(&id) {
+            *connected_id = Some(id);
+        } else {
+            return Err("Board not available for connection".to_string())
         }
         Ok(())
     }
     
-    pub fn disconnect(&mut self) {
-        self.connected_id = None;
+    pub fn disconnect(&self) {
+        let Ok(mut connected_id) = self.connected_id.lock() else {
+            return;
+        };
+        *connected_id = None;
     }
 
-    fn gen_id(&self) -> u32 {
+    fn gen_id(&self) -> Result<u32, ()> {
+        let Ok(discovered) = self.discovered.lock() else {
+            return Err(());
+        };
         // Probably this isn't the best way of generating unique IDs, but it should
         // be okay here
         let mut rng = rand::rng();
 
         let mut rand = rng.random::<u32>();
-        while self.discovered.contains_key(&rand) {
+        let mut tries = 0;
+        while discovered.contains_key(&rand) && tries < 20 {
             rand = rng.random::<u32>();
+            tries += 1;
         }
 
-        rand
+        Ok(rand)
     }
 }
 

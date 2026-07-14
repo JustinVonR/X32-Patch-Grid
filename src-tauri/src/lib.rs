@@ -1,6 +1,5 @@
 mod x32_osc;
 
-use tokio::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use x32_osc::{ConnectionList, ConnectionManager};
 
@@ -9,28 +8,25 @@ struct AppData {
 }
 
 #[tauri::command]
-async fn scan(state: State<'_, Mutex<AppData>>) -> Result<ConnectionList, String> {
-    let mut app_data = state.lock().await;
-    app_data.osc_cons.scan().await;
-    Ok(app_data.osc_cons.get_connection_list())
+async fn scan(state: State<'_, AppData>) -> Result<ConnectionList, String> {
+    state.osc_cons.scan().await;
+    Ok(state.osc_cons.get_connection_list().await)
 }
 
 #[tauri::command]
-async fn get_connections(state: State<'_, Mutex<AppData>>) -> Result<ConnectionList, String> {
-    let app_data = state.lock().await;
-    Ok(app_data.osc_cons.get_connection_list())
+async fn get_connections(state: State<'_, AppData>) -> Result<ConnectionList, String> {
+    Ok(state.osc_cons.get_connection_list().await)
 }
 
 #[tauri::command]
-async fn connect(app: AppHandle, state: State<'_, Mutex<AppData>>, id: u32) -> Result<(), String> {
-    let mut app_data = state.lock().await;
-    app_data.osc_cons.connect(id)
+async fn connect(_app: AppHandle, state: State<'_, AppData>, id: u32) -> Result<(), String> {
+    state.osc_cons.connect(id)?;
+    Ok(())
 }
 
 #[tauri::command]
-async fn disconnect(state: State<'_, Mutex<AppData>>) -> Result<(), String> {
-    let mut app_data = state.lock().await;
-    app_data.osc_cons.disconnect();
+async fn disconnect(state: State<'_, AppData>) -> Result<(), String> {
+    state.osc_cons.disconnect();
     Ok(())
 }
 
@@ -38,9 +34,9 @@ async fn disconnect(state: State<'_, Mutex<AppData>>) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            app.manage(Mutex::new(AppData {
+            app.manage(AppData {
                 osc_cons: ConnectionManager::new(),
-            }));
+            });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
