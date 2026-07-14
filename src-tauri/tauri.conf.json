@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "x32-patch-grid",
+  "productName": "X32 Patch Grid",
   "version": "0.1.0",
   "identifier": "dev.justinvonr.x32-patch-grid",
   "build": {

@@ -2,9 +2,11 @@ use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
-use std::thread::sleep;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
+
+use tokio::net::UdpSocket;
+use tokio::time::sleep;
 
 use rand::RngExt;
 
@@ -12,15 +14,28 @@ use super::{X32Console, ConnectionList};
 
 //------------------------------ Private Connection Management Types ---------------------------//
 #[derive(Debug)]
-struct OscInterface {
+struct NetInterface {
     ip: IpAddr,
     mask: IpAddr,
     broadcast: IpAddr,
 }
 
-impl Clone for OscInterface {
+impl NetInterface {
+    /// Check whether subnet of a remote address matches the subnet of this interface. Always returns false for Ipv6
+    fn reaches_ip(&self, remote: IpAddr) -> bool {
+        // TODO: Make this handle IPv6?
+        let (IpAddr::V4(ip), IpAddr::V4(mask), IpAddr::V4(remote)) = (self.ip, self.mask, remote) else {
+            return false;
+        };
+        let ip_subnet = Ipv4Addr::from_bits(ip.to_bits() & mask.to_bits());
+        let remote_subnet = Ipv4Addr::from_bits(remote.to_bits() & mask.to_bits());
+        ip_subnet == remote_subnet
+    }
+}
+
+impl Clone for NetInterface {
     fn clone(&self) -> Self {
-        OscInterface {
+        NetInterface {
             ip: self.ip.clone(),
             mask: self.mask.clone(),
             broadcast: self.broadcast.clone(),
@@ -31,13 +46,13 @@ impl Clone for OscInterface {
 #[derive(Debug)]
 struct OscSocket {
     socket: UdpSocket,
-    interface: OscInterface,
+    interface: NetInterface,
 }
 
 //------------------------------ Define Connection Manager Object ------------------------------//
 
 pub struct ConnectionManager {
-    network_interfaces: Vec<OscInterface>,
+    network_interfaces: Vec<NetInterface>,
     connected_id: Option<u32>,
     discovered: HashMap<u32, X32Console>,
 }
@@ -63,7 +78,7 @@ impl ConnectionManager {
         }
     }
 
-    pub fn scan(&mut self) {
+    pub async fn scan(&mut self) {
         // Reset List of Discovered Consoles
         if let Some(connected_id) = self.connected_id {
             self.discovered.retain(|&id, _| {
@@ -77,8 +92,9 @@ impl ConnectionManager {
         let mut open_sockets: Vec<OscSocket> = Vec::new();
 
         for itf in &self.network_interfaces {
-            match bind_and_config(itf.ip) {
+            match bind_and_config(itf.ip).await {
                 Ok(sock) => {
+                    println!("Bound to: {}", sock.local_addr().unwrap());
                     open_sockets.push(OscSocket {
                         socket: sock,
                         interface: itf.clone(),
@@ -111,7 +127,7 @@ impl ConnectionManager {
                     },
                 };
                 let sock = &osc_sock.socket;
-                let result = sock.send_to(&scan_packet, addr);
+                let result = sock.send_to(&scan_packet, addr).await;
                 match result {
                     Ok(_) => {
                     },
@@ -121,12 +137,12 @@ impl ConnectionManager {
                 }
             }
 
-            sleep(Duration::from_secs(1));
+            sleep(Duration::from_secs(1)).await;
 
             for osc_sock in &open_sockets {
                 let sock = &osc_sock.socket;
                 let mut recv_buf: [u8; 1024] = [0; 1024];
-                let Ok(num_bytes) = sock.recv(&mut recv_buf) else {
+                let Ok(num_bytes) = sock.try_recv(&mut recv_buf) else {
                     continue;
                 };
                 let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], &self.gen_id()) else {
@@ -168,9 +184,8 @@ impl ConnectionManager {
 
 //------------------------------ Private Helper Functions --------------------------------------//
 
-fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
-    let new_sock = UdpSocket::bind(SocketAddr::new(ip, 0))?;
-    new_sock.set_nonblocking(true)?;
+async fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
+    let new_sock = UdpSocket::bind(SocketAddr::new(ip, 0)).await?;
     new_sock.set_broadcast(true)?;
     Ok(new_sock)
 }
@@ -206,10 +221,10 @@ fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, OscError> {
 }
 
 /// Get a list of socket addresses and the corresponding broadcast addresses for the computer
-fn get_search_itfs() -> Vec<OscInterface> {
+fn get_search_itfs() -> Vec<NetInterface> {
     let network_ifs = NetworkInterface::show().unwrap();
 
-    let mut search_addrs: Vec<OscInterface> = Vec::new();
+    let mut search_addrs: Vec<NetInterface> = Vec::new();
 
     // Add broadcast addresses for find board OSC servers. Check on all addresses of all interfaces
     for itf in network_ifs.iter() {
@@ -229,7 +244,7 @@ fn get_search_itfs() -> Vec<OscInterface> {
             if let Some(IpAddr::V4(mask)) = itf.addr[i].netmask() {
                 let inv_mask = !mask.to_bits();
                 let broadcast = ip.to_bits() | inv_mask;
-                search_addrs.push(OscInterface {
+                search_addrs.push(NetInterface {
                     ip: IpAddr::V4(ip),
                     mask: IpAddr::V4(mask),
                     broadcast: IpAddr::V4(Ipv4Addr::from_bits(broadcast)),
