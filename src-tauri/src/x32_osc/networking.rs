@@ -14,6 +14,7 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
 use rand::RngExt;
+use tauri::AppHandle;
 use connection::Connection;
 use super::{X32Console, ConnectionList};
 
@@ -184,7 +185,7 @@ impl ConnectionManager {
     }
 
     // Creates a new connection to the discovered console with the specified ID
-    pub fn connect(&self, id: u32) -> Result<(), String> {
+    pub async fn connect(&self, id: u32, app: AppHandle) -> Result<(), String> {
         let (Ok(discovered), Ok(mut connection)) = (self.discovered.lock(), self.curr_connection.lock()) else {
             return Err("Unable to lock Mutex for Connection".to_string());
         };
@@ -203,7 +204,11 @@ impl ConnectionManager {
 
             // Create new connection, starts async automatically
             // TODO: Is there a better way than cloning here? It's probably cheap but I want to look into it
-            *connection = Some(Connection::new(console.clone(), interface.clone()));
+            // TODO: Also research error handling, is there a better way of converting to a String Err from anything
+            let Ok(new_con) = Connection::new(console.clone(), interface.clone(), app) else {
+                return Err("Failed to create connection".to_string())
+            };
+            *connection = Some(new_con);
         } else {
             return Err("Board not available for connection".to_string())
         }

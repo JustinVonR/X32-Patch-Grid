@@ -19,8 +19,8 @@ async fn get_connections(state: State<'_, AppData>) -> Result<ConnectionList, St
 }
 
 #[tauri::command]
-async fn connect(_app: AppHandle, state: State<'_, AppData>, id: u32) -> Result<(), String> {
-    state.osc_cons.connect(id)?;
+async fn connect(app: AppHandle, state: State<'_, AppData>, id: u32) -> Result<(), String> {
+    state.osc_cons.connect(id, app).await?;
     Ok(())
 }
 

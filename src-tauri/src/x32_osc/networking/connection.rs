@@ -1,4 +1,11 @@
-use std::sync::Arc;
+use std::error::Error;
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::AppHandle;
+use tauri::async_runtime::block_on;
+use tokio::net::UdpSocket;
+
+use super::bind_and_config;
 
 use super::{
     NetInterface,
@@ -6,12 +13,16 @@ use super::{
 };
 
 pub struct ConnectionState {
-    
+    event_handle: AppHandle,
+    stop: AtomicBool,
 }
 
 impl ConnectionState {
-    pub fn new() -> Self {
-        ConnectionState {}
+    pub fn new(app: AppHandle) -> Self {
+        ConnectionState {
+            event_handle: app,
+            stop: AtomicBool::new(false),
+        }
     }
 }
 
@@ -22,19 +33,26 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(console: X32Console, interface: NetInterface) -> Self {
+    // Create a new connection to an X32 Console and start running its async tasks
+    pub fn new(console: X32Console, interface: NetInterface, app: AppHandle) -> Result<Self, Box<dyn Error>> {
+        // Create connection structure
         let new_connection = Self {
-            state: Arc::new(ConnectionState::new()),
+            state: Arc::new(ConnectionState::new(app)),
             console,
             interface,
         };
         
+        // Bind socket and connect to console IP
+        let socket = block_on(bind_and_config(new_connection.interface.ip))?;
         
+        // Set up channels and notifications for async tasks
         
-        new_connection
+        // Spawn three async tasks: Handle incoming on network, Send outgoing on network, and Handle incoming from UI
+        
+        Ok(new_connection)
     }
-    
+
     pub fn disconnect(&self) {
-        
+        self.state.stop.store(true, Ordering::Relaxed);
     }
 }
