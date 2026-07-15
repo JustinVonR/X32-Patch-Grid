@@ -1,6 +1,6 @@
-mod connections;
+mod networking;
 mod types;
 
 pub use types::*;
 
-pub use connections::ConnectionManager;
+pub use networking::ConnectionManager;

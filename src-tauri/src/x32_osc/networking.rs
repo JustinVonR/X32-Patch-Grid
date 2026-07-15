@@ -1,8 +1,12 @@
+mod connection;
+
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -10,7 +14,7 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
 use rand::RngExt;
-
+use connection::Connection;
 use super::{X32Console, ConnectionList};
 
 //------------------------------ Private Connection Management Types ---------------------------//
@@ -54,7 +58,7 @@ struct OscSocket {
 
 pub struct ConnectionManager {
     network_interfaces: Vec<NetInterface>,
-    connected_id: Arc<Mutex<Option<u32>>>,
+    curr_connection: Arc<Mutex<Option<Connection>>>,
     discovered: Arc<Mutex<HashMap<u32, X32Console>>>,
 }
 
@@ -64,17 +68,17 @@ impl ConnectionManager {
 
         ConnectionManager {
             network_interfaces: itfs,
-            connected_id: Arc::new(Mutex::new(None)),
+            curr_connection: Arc::new(Mutex::new(None)),
             discovered: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub async fn get_connection_list(&self) -> ConnectionList {
-        if let (Ok(discovered), Ok(connected_id)) = (self.discovered.lock(), self.connected_id.lock()) {
+        if let (Ok(discovered), Ok(connection)) = (self.discovered.lock(), self.curr_connection.lock()) {
             ConnectionList {
                 consoles: discovered.values().cloned().collect(),
-                connected_id: match *connected_id {
-                    Some(id) => Some(id.clone()),
+                connected_id: match &*connection {
+                    Some(con) => Some(con.console.id),
                     None => None,
                 }
             }
@@ -168,32 +172,53 @@ impl ConnectionManager {
         }
 
         // Remove options not seen this scan unless currently connected
-        if let (Ok(mut discovered), Ok(connected_id)) = (self.discovered.lock(), self.connected_id.lock()) {
+        if let (Ok(mut discovered), Ok(connection)) = (self.discovered.lock(), self.curr_connection.lock()) {
             discovered.retain(|&k, _| {
-                last_scan_ids.contains(&k) || (connected_id.is_some() && k == connected_id.unwrap())
+                last_scan_ids.contains(&k) || match &*connection {
+                    Some(con) if con.console.id == k => true,
+                    _ => false,
+                }
             })
         }
 
     }
-    
+
+    // Creates a new connection to the discovered console with the specified ID
     pub fn connect(&self, id: u32) -> Result<(), String> {
-        let (Ok(discovered), Ok(mut connected_id)) = (self.discovered.lock(), self.connected_id.lock()) else {
+        let (Ok(discovered), Ok(mut connection)) = (self.discovered.lock(), self.curr_connection.lock()) else {
             return Err("Unable to lock Mutex for Connection".to_string());
         };
 
+        // Only connect if id is still valid
         if discovered.contains_key(&id) {
-            *connected_id = Some(id);
+            let console = discovered.get(&id).expect("Already checked ID in discovered");
+            // TODO: Heck of a One-Liner, Fix That:
+            let Some(interface) = self.network_interfaces.iter().find(|&i| {i.reaches_ip(console.ip)}) else {
+                return Err("Unable to reach console".to_string());
+            };
+
+            if let Some(con) = &*connection {
+                con.disconnect();
+            }
+
+            // Create new connection, starts async automatically
+            // TODO: Is there a better way than cloning here? It's probably cheap but I want to look into it
+            *connection = Some(Connection::new(console.clone(), interface.clone()));
         } else {
             return Err("Board not available for connection".to_string())
         }
         Ok(())
     }
-    
+
+    // Disconnects the current console connection
     pub fn disconnect(&self) {
-        let Ok(mut connected_id) = self.connected_id.lock() else {
+        let Ok(mut connection) = self.curr_connection.lock() else {
             return;
         };
-        *connected_id = None;
+
+        if let Some(connection) = &*connection {
+            connection.disconnect();
+        }
     }
 
     fn gen_id(&self) -> Result<u32, ()> {
@@ -224,14 +249,14 @@ async fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
     Ok(new_sock)
 }
 
-fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, OscError> {
+fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, Box<dyn Error>> {
     let (_, osc_packet) = decoder::decode_udp(bytes)?;
     let OscPacket::Message(mut osc_message) = osc_packet else {
-        return Err(OscError::BadMessage("Expected an individual message as an xinfo response"));
+        return Err(Box::from(OscError::BadMessage("Expected an individual message as an xinfo response")));
     };
 
     if osc_message.addr != "/xinfo" || osc_message.args.len() != 4 {
-        return Err(OscError::BadAddress("Expected /xinfo address with 4 args as a response".to_string()));
+        return Err(Box::from(OscError::BadAddress("Expected /xinfo address with 4 args as a response".to_string())));
     }
 
     let version = osc_message.args.pop();
@@ -239,19 +264,18 @@ fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, OscError> {
     let model = osc_message.args.pop();
     let ip = osc_message.args.pop();
 
-    match (version, model, ip) {
-        (Some(OscType::String(version)), Some(OscType::String(model)), Some(OscType::String(ip))) => {
-            Ok(X32Console {
-                model,
-                ip,
-                version,
-                id: board_id.clone(),
-            })
-        },
-        _ => {
-            Err(OscError::BadArg(String::from("Expected args to be strings")))
-        }
-    }
+    let (Some(OscType::String(version)), Some(OscType::String(model)), Some(OscType::String(ip))) = (version, model, ip) else {
+        return Err(Box::from(OscError::BadArg(String::from("Expected args to be strings"))));
+    };
+
+    let ip = IpAddr::V4(Ipv4Addr::from_str(&ip)?);
+
+    Ok(X32Console {
+        model,
+        ip,
+        version,
+        id: board_id.clone(),
+    })
 }
 
 /// Get a list of socket addresses and the corresponding broadcast addresses for the computer

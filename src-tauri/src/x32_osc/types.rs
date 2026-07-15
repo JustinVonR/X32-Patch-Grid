@@ -1,9 +1,10 @@
+use std::net::IpAddr;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct X32Console {
     pub model: String,
-    pub ip: String,
+    pub ip: IpAddr,
     pub version: String,
     pub id: u32,
 }
