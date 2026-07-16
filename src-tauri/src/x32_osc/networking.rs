@@ -4,7 +4,6 @@ use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -187,32 +186,40 @@ impl ConnectionManager {
 
     // Creates a new connection to the discovered console with the specified ID
     pub async fn connect(&self, id: u32, app: AppHandle) -> CommandResult<()> {
-        let (discovered, mut connection) = (self.discovered.lock()?, self.curr_connection.lock()?);
+        let console;
+        {
+            // Trick to only lock one Mutex at a time by putting this in a separate scope block
+            let discovered = self.discovered.lock()?;
 
-        // Only connect if id is still valid
-        if discovered.contains_key(&id) {
-            let console = discovered.get(&id).expect("already checked ID in discovered");
-
-            let Some(interface) = self.network_interfaces.iter().find(|&i| {i.reaches_ip(console.ip)}) else {
-                return Err(CommandError::InvalidOp(String::from("unable to reach console")));
+            // Only connect if id is still valid
+            let Some(console_with_id) = discovered.get(&id) else {
+                return Err(CommandError::InvalidOp(String::from("console not available")));
             };
 
-            if let Some(con) = &*connection {
-                con.disconnect();
-            }
-
-            // Create new connection, starts async automatically
-            let new_con = Connection::new(console.clone(), interface.clone(), app)?;
-            *connection = Some(new_con);
-        } else {
-            return Err(CommandError::InvalidOp(String::from("console not available")));
+            console = console_with_id.to_owned();
         }
+
+        let Some(interface) = self.network_interfaces.iter().find(|&i| {i.reaches_ip(console.ip)}) else {
+            return Err(CommandError::InvalidOp(String::from("unable to reach console")));
+        };
+
+        let new_con = Connection::new(console, interface.clone(), app).await?;
+
+        let mut connection = self.curr_connection.lock()?;
+
+        if let Some(con) = &*connection {
+            con.disconnect();
+        }
+
+        // Create new connection, starts async automatically
+        *connection = Some(new_con);
+
         Ok(())
     }
 
     // Disconnects the current console connection
     pub fn disconnect(&self) {
-        let Ok(mut connection) = self.curr_connection.lock() else {
+        let Ok(connection) = self.curr_connection.lock() else {
             return;
         };
 
