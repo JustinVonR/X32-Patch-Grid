@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::AppHandle;
 use tauri::async_runtime::block_on;
 use tokio::net::UdpSocket;
-
+use crate::x32_osc::errors::{CommandError, CommandResult};
 use super::bind_and_config;
 
 use super::{
@@ -34,7 +34,7 @@ pub struct Connection {
 
 impl Connection {
     // Create a new connection to an X32 Console and start running its async tasks
-    pub fn new(console: X32Console, interface: NetInterface, app: AppHandle) -> Result<Self, Box<dyn Error>> {
+    pub fn new(console: X32Console, interface: NetInterface, app: AppHandle) -> CommandResult<Connection> {
         // Create connection structure
         let new_connection = Self {
             state: Arc::new(ConnectionState::new(app)),

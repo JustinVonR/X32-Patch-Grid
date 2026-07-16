@@ -17,6 +17,7 @@ use rand::RngExt;
 use tauri::AppHandle;
 use connection::Connection;
 use super::{X32Console, ConnectionList};
+use super::errors::{CommandError, CommandResult};
 
 //------------------------------ Private Connection Management Types ---------------------------//
 #[derive(Debug)]
@@ -185,17 +186,15 @@ impl ConnectionManager {
     }
 
     // Creates a new connection to the discovered console with the specified ID
-    pub async fn connect(&self, id: u32, app: AppHandle) -> Result<(), String> {
-        let (Ok(discovered), Ok(mut connection)) = (self.discovered.lock(), self.curr_connection.lock()) else {
-            return Err("Unable to lock Mutex for Connection".to_string());
-        };
+    pub async fn connect(&self, id: u32, app: AppHandle) -> CommandResult<()> {
+        let (discovered, mut connection) = (self.discovered.lock()?, self.curr_connection.lock()?);
 
         // Only connect if id is still valid
         if discovered.contains_key(&id) {
-            let console = discovered.get(&id).expect("Already checked ID in discovered");
-            // TODO: Heck of a One-Liner, Fix That:
+            let console = discovered.get(&id).expect("already checked ID in discovered");
+
             let Some(interface) = self.network_interfaces.iter().find(|&i| {i.reaches_ip(console.ip)}) else {
-                return Err("Unable to reach console".to_string());
+                return Err(CommandError::InvalidOp(String::from("unable to reach console")));
             };
 
             if let Some(con) = &*connection {
@@ -203,14 +202,10 @@ impl ConnectionManager {
             }
 
             // Create new connection, starts async automatically
-            // TODO: Is there a better way than cloning here? It's probably cheap but I want to look into it
-            // TODO: Also research error handling, is there a better way of converting to a String Err from anything
-            let Ok(new_con) = Connection::new(console.clone(), interface.clone(), app) else {
-                return Err("Failed to create connection".to_string())
-            };
+            let new_con = Connection::new(console.clone(), interface.clone(), app)?;
             *connection = Some(new_con);
         } else {
-            return Err("Board not available for connection".to_string())
+            return Err(CommandError::InvalidOp(String::from("console not available")));
         }
         Ok(())
     }
@@ -226,9 +221,9 @@ impl ConnectionManager {
         }
     }
 
-    fn gen_id(&self) -> Result<u32, ()> {
+    fn gen_id(&self) -> CommandResult<u32> {
         let Ok(discovered) = self.discovered.lock() else {
-            return Err(());
+            return Err(CommandError::Mutex);
         };
         // Probably this isn't the best way of generating unique IDs, but it should
         // be okay here
@@ -254,14 +249,14 @@ async fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
     Ok(new_sock)
 }
 
-fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, Box<dyn Error>> {
+fn parse_xinfo (bytes: &[u8], board_id: &u32) -> CommandResult<X32Console> {
     let (_, osc_packet) = decoder::decode_udp(bytes)?;
     let OscPacket::Message(mut osc_message) = osc_packet else {
-        return Err(Box::from(OscError::BadMessage("Expected an individual message as an xinfo response")));
+        return Err(CommandError::OSC(OscError::BadMessage("Expected an individual message as an xinfo response")));
     };
 
     if osc_message.addr != "/xinfo" || osc_message.args.len() != 4 {
-        return Err(Box::from(OscError::BadAddress("Expected /xinfo address with 4 args as a response".to_string())));
+        return Err(CommandError::OSC(OscError::BadAddress(String::from("Expected /xinfo address with 4 args as a response"))));
     }
 
     let version = osc_message.args.pop();
@@ -270,7 +265,7 @@ fn parse_xinfo (bytes: &[u8], board_id: &u32) -> Result<X32Console, Box<dyn Erro
     let ip = osc_message.args.pop();
 
     let (Some(OscType::String(version)), Some(OscType::String(model)), Some(OscType::String(ip))) = (version, model, ip) else {
-        return Err(Box::from(OscError::BadArg(String::from("Expected args to be strings"))));
+        return Err(CommandError::OSC(OscError::BadArg(String::from("Expected args to be strings"))));
     };
 
     let ip = IpAddr::V4(Ipv4Addr::from_str(&ip)?);
