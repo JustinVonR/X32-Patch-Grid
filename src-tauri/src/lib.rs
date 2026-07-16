@@ -1,7 +1,8 @@
 mod x32_osc;
 
 use tauri::{AppHandle, Manager, State};
-use x32_osc::{ConnectionList, ConnectionManager};
+use x32_osc::ConnectionList;
+use x32_osc::ConnectionManager;
 
 struct AppData {
     osc_cons: ConnectionManager
