@@ -1,15 +1,18 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::{Arc};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot, Mutex, Notify};
+use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 use tokio::time::sleep;
-use rosc::OscPacket;
+use rosc::{OscMessage, OscPacket, OscType};
+use rosc::decoder::decode_udp;
+use rosc::encoder::encode;
+use serde::Serialize;
 use tokio::task::JoinSet;
-use crate::x32_osc::errors::CommandResult;
+use crate::x32_osc::errors::{CommandError, CommandResult};
 use super::bind_and_config;
 
 use super::{
@@ -23,6 +26,12 @@ enum ReqType {
     Query(oneshot::Sender<OscPacket>),
 }
 
+#[derive(Clone, Serialize)]
+struct Status {
+    ip: String,
+    model: String,
+}
+
 #[derive(Debug)]
 struct SocketMsg {
     req_type: ReqType,
@@ -31,18 +40,14 @@ struct SocketMsg {
     packet: OscPacket,
 }
 
-#[derive(Debug)]
-pub enum ConnectionMsg {
-    Command(),
-    Query(),
-}
-
 pub struct ConnectionState {
     event_handle: AppHandle,
     stop: CancellationToken,
     socket: UdpSocket,
     send_queue: Mutex<VecDeque<SocketMsg>>,
     send_notify: Arc<Notify>,
+    last_update: Mutex<Option<SystemTime>>,
+    last_status: Mutex<Option<Status>>
 }
 
 impl ConnectionState {
@@ -53,13 +58,14 @@ impl ConnectionState {
             socket,
             send_queue: Mutex::new(VecDeque::new()),
             send_notify: Arc::new(Notify::new()),
+            last_update: Mutex::new(None),
+            last_status: Mutex::new(None),
         }
     }
 }
 
 pub struct Connection {
     state: Arc<ConnectionState>,
-    message_tx: mpsc::Sender<ConnectionMsg>,
     async_handles: JoinSet<()>,
     pub console: X32Console,
     pub interface: NetInterface,
@@ -73,20 +79,16 @@ impl Connection {
         let socket = bind_and_config(interface.ip).await?;
         socket.connect(SocketAddr::new(console.ip, 10023)).await?;
         
-        // Set up channels and notifications for async tasks
-        let (message_tx, message_rx) = mpsc::channel(128);
-
         let mut new_connection = Self {
             state: Arc::new(ConnectionState::new(app, socket)),
             console,
             interface,
-            message_tx,
             async_handles: JoinSet::new(),
         };
 
         // Spawn three async tasks: Handle incoming on network, Send outgoing on network, and Handle incoming from UI
         let state = new_connection.state.clone();
-        new_connection.async_handles.spawn(async {handle_app_messages(state, message_rx).await});
+        new_connection.async_handles.spawn(async {status_loop(state).await});
 
         let state = new_connection.state.clone();
         new_connection.async_handles.spawn(async {handle_network_replies(state).await});
@@ -98,6 +100,7 @@ impl Connection {
     }
 
     pub fn disconnect(&self) {
+        let _ = self.state.event_handle.emit("disconnect", ());
         self.state.stop.cancel();
     }
 }
@@ -109,29 +112,89 @@ impl Drop for Connection {
 }
 
 // Private functions for the three different async handlers
-async fn handle_app_messages(state: Arc<ConnectionState>, _message_rx: mpsc::Receiver<ConnectionMsg>) {
-    println!("Async 1 Started");
+async fn status_loop(state: Arc<ConnectionState>) {
+    let status_msg = encode(&OscPacket::Message(OscMessage{
+        addr: String::from("/status"),
+        args: Vec::new(),
+    })).expect("hardcoded status message should encode");
+
+    // Maybe want to replace this with a subscription instead of xremote
+    let xremote_msg = encode(&OscPacket::Message(OscMessage{
+        addr: String::from("/xremote"),
+        args: Vec::new(),
+    })).expect("hardcoded xremote message should encode");
+
     while !state.stop.is_cancelled() {
-        sleep(Duration::from_secs(5)).await;
-        println!("Handling app messages");
+        // Don't care about result, we'll resend at the next interval anyway
+        let _ = state.socket.send(&status_msg).await;
+        let _ = state.socket.send(&xremote_msg).await;
+
+        // Update status state as needed and send messages to UI
+        // TODO: Clean this maybe, it might already be a fairly clean way of doing it?
+        if let (Ok(last_status), Ok(mut last_update)) = (state.last_status.lock(), state.last_update.lock()) {
+            if let Some(time) = last_update.clone() {
+                if let Ok(elapsed) = time.elapsed() {
+                    if elapsed.as_secs() > 6 {
+                        *last_update = None;
+
+                        // Again, this will be retried on a loop
+                        let _ = state.event_handle.emit("timeout", last_status.clone());
+                    }
+                }
+            }
+        }
+
+        sleep(Duration::from_secs(4)).await;
     }
-    println!("Stopping Async 1")
 }
 
 async fn handle_network_replies(state: Arc<ConnectionState>) {
-    println!("Async 2 Started");
     while !state.stop.is_cancelled() {
-        sleep(Duration::from_secs(5)).await;
-        println!("Handling network replies");
+        let mut recv_buf: [u8; 128] = [0; 128];
+
+        // Try to receive again if error occurs, it could be a disconnected board that would re-appear
+        // TODO: Handle this better?
+        let Ok(_) = state.socket.recv(&mut recv_buf).await else {continue};
+
+        // Skip packet if it fails to parse
+        let Ok(osc_message) = unpack_udp(&recv_buf) else {continue};
+
+        match osc_message.addr.as_str() {
+            "/status" => {
+                let (OscType::String(ip), OscType::String(model)) = (osc_message.args[1].clone(), osc_message.args[2].clone()) else {
+                    continue;
+                };
+
+                let status = Status {
+                    ip: String::from(ip),
+                    model: String::from(model),
+                };
+
+                if let (Ok(mut last_status), Ok(mut last_update)) = (state.last_status.lock(), state.last_update.lock()) {
+                    if last_update.is_none() {
+                        let _ = state.event_handle.emit("connected", status.clone());
+                    }
+
+                    *last_status = Some(status);
+                    *last_update = Some(SystemTime::now());
+                }
+            },
+            _ => {},
+        }
     }
-    println!("Stopping Async 2")
+}
+
+fn unpack_udp(msg: &[u8]) -> CommandResult<OscMessage> {
+    let (_, osc_packet) = decode_udp(msg)?;
+    match osc_packet {
+        OscPacket::Message(msg) => {Ok(msg)},
+        OscPacket::Bundle(_) => {Err(CommandError::Parse(String::from("Expected a single message")))}
+    }
 }
 
 async fn handle_send_queue(state: Arc<ConnectionState>) {
-    println!("Async 3 Started");
+    // TODO: This still needs to be implemented
     while !state.stop.is_cancelled() {
-        sleep(Duration::from_secs(5)).await;
-        println!("Handling send queue");
+        sleep(Duration::from_secs(10)).await;
     }
-    println!("Stopping Async 3")
 }
