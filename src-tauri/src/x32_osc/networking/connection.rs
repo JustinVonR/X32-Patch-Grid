@@ -1,12 +1,14 @@
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::{Arc};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, broadcast};
-use tauri::async_runtime::spawn;
+use tokio::sync::{mpsc, oneshot, Mutex, Notify};
+use tokio_util::sync::CancellationToken;
 use tokio::time::sleep;
+use rosc::OscPacket;
+use tokio::task::JoinSet;
 use crate::x32_osc::errors::CommandResult;
 use super::bind_and_config;
 
@@ -16,123 +18,120 @@ use super::{
 };
 
 #[derive(Debug)]
+enum ReqType {
+    Command,
+    Query(oneshot::Sender<OscPacket>),
+}
+
+#[derive(Debug)]
+struct SocketMsg {
+    req_type: ReqType,
+    first_ack_time: Option<SystemTime>,
+    sent_num: u32,
+    packet: OscPacket,
+}
+
+#[derive(Debug)]
 pub enum ConnectionMsg {
     Command(),
     Query(),
 }
 
-#[derive(Clone, Debug)]
-pub enum Response {
-    Update(),
-    Query(),
-}
-
-
-
-
 pub struct ConnectionState {
     event_handle: AppHandle,
-    stop: AtomicBool,
+    stop: CancellationToken,
     socket: UdpSocket,
+    send_queue: Mutex<VecDeque<SocketMsg>>,
+    send_notify: Arc<Notify>,
 }
 
 impl ConnectionState {
     pub fn new(app: AppHandle, socket: UdpSocket) -> Self {
         ConnectionState {
             event_handle: app,
-            stop: AtomicBool::new(false),
+            stop: CancellationToken::new(),
             socket,
+            send_queue: Mutex::new(VecDeque::new()),
+            send_notify: Arc::new(Notify::new()),
         }
     }
 }
 
 pub struct Connection {
     state: Arc<ConnectionState>,
+    message_tx: mpsc::Sender<ConnectionMsg>,
+    async_handles: JoinSet<()>,
     pub console: X32Console,
     pub interface: NetInterface,
-    pub message_tx: mpsc::Sender<ConnectionMsg>,
-    pub response_tx: broadcast::Sender<Response>,
 }
 
 impl Connection {
     // Create a new connection to an X32 Console and start running its async tasks
     pub async fn new(console: X32Console, interface: NetInterface, app: AppHandle) -> CommandResult<Connection> {
         let _ = tauri::async_runtime::handle();
-        println!("Spawning connection!");
         // Bind socket and connect to console IP
         let socket = bind_and_config(interface.ip).await?;
         socket.connect(SocketAddr::new(console.ip, 10023)).await?;
         
         // Set up channels and notifications for async tasks
         let (message_tx, message_rx) = mpsc::channel(128);
-        let (response_tx, _) = broadcast::channel(128);
 
-        let new_connection = Self {
+        let mut new_connection = Self {
             state: Arc::new(ConnectionState::new(app, socket)),
             console,
             interface,
             message_tx,
-            response_tx: response_tx.clone(),
+            async_handles: JoinSet::new(),
         };
-
-        println!("Set up socket successfully!");
 
         // Spawn three async tasks: Handle incoming on network, Send outgoing on network, and Handle incoming from UI
         let state = new_connection.state.clone();
-        spawn(async {
-            handle_app_messages(state, message_rx).await;
-        });
+        new_connection.async_handles.spawn(async {handle_app_messages(state, message_rx).await});
 
         let state = new_connection.state.clone();
-        spawn(async {
-            handle_network_replies(state, response_tx).await;
-        });
+        new_connection.async_handles.spawn(async {handle_network_replies(state).await});
 
         let state = new_connection.state.clone();
-        spawn(async {
-            handle_send_queue(state).await;
-        });
-
-        println!("Returning connection struct");
+        new_connection.async_handles.spawn(async {handle_send_queue(state).await});
 
         Ok(new_connection)
     }
 
     pub fn disconnect(&self) {
-        self.state.stop.store(true, Ordering::Relaxed);
+        self.state.stop.cancel();
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.disconnect();
     }
 }
 
 // Private functions for the three different async handlers
 async fn handle_app_messages(state: Arc<ConnectionState>, _message_rx: mpsc::Receiver<ConnectionMsg>) {
     println!("Async 1 Started");
-    let mut stop = false;
-    while !stop {
+    while !state.stop.is_cancelled() {
         sleep(Duration::from_secs(5)).await;
         println!("Handling app messages");
-        stop = state.stop.load(Ordering::Relaxed);
     }
     println!("Stopping Async 1")
 }
 
-async fn handle_network_replies(state: Arc<ConnectionState>, _response_tx: broadcast::Sender<Response>) {
+async fn handle_network_replies(state: Arc<ConnectionState>) {
     println!("Async 2 Started");
-    let mut stop = false;
-    while !stop {
+    while !state.stop.is_cancelled() {
         sleep(Duration::from_secs(5)).await;
         println!("Handling network replies");
-        stop = state.stop.load(Ordering::Relaxed);
     }
     println!("Stopping Async 2")
 }
 
 async fn handle_send_queue(state: Arc<ConnectionState>) {
     println!("Async 3 Started");
-    let mut stop = false;
-    while !stop {
+    while !state.stop.is_cancelled() {
         sleep(Duration::from_secs(5)).await;
         println!("Handling send queue");
-        stop = state.stop.load(Ordering::Relaxed);
     }
     println!("Stopping Async 3")
 }
