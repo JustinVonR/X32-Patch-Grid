@@ -6,16 +6,18 @@ use rosc::{OscPacket, OscMessage, OscType, encoder, decoder, OscError};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
+use tokio::sync::Mutex;
 
 use rand::RngExt;
 use tauri::AppHandle;
 use connection::Connection;
-use super::{X32Console, ConnectionList};
+
+use super::*;
 use super::errors::{CommandError, CommandResult};
 
 //------------------------------ Private Connection Management Types ---------------------------//
@@ -75,18 +77,12 @@ impl ConnectionManager {
     }
 
     pub async fn get_connection_list(&self) -> ConnectionList {
-        if let (Ok(discovered), Ok(connection)) = (self.discovered.lock(), self.curr_connection.lock()) {
-            ConnectionList {
-                consoles: discovered.values().cloned().collect(),
-                connected_id: match &*connection {
-                    Some(con) => Some(con.console.id),
-                    None => None,
-                }
-            }
-        } else {
-            ConnectionList {
-                consoles: Vec::new(),
-                connected_id: None,
+        let (discovered, connection) = (self.discovered.lock().await, self.curr_connection.lock().await);
+        ConnectionList {
+            consoles: discovered.values().cloned().collect(),
+            connected_id: match &*connection {
+                Some(con) => Some(con.console.id),
+                None => None,
             }
         }
     }
@@ -121,7 +117,7 @@ impl ConnectionManager {
         let mut last_scan_ids: Vec<u32> = Vec::new();
 
         // Send out scanning packet and make list of unique responses
-        for _ in 0..5 {
+        for _ in 0..8 {
             for osc_sock in &open_sockets {
                 let addr = match osc_sock.interface.broadcast {
                     IpAddr::V4(ipv4) => {
@@ -142,7 +138,7 @@ impl ConnectionManager {
                 }
             }
 
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_millis(200)).await;
 
             for osc_sock in &open_sockets {
                 let sock = &osc_sock.socket;
@@ -150,38 +146,47 @@ impl ConnectionManager {
                 let Ok(num_bytes) = sock.try_recv(&mut recv_buf) else {
                     continue;
                 };
-                // Only proceed to add board if we can make an ID for it
-                if let Ok(id) = &self.gen_id() {
-                    // Skip if unable to parse packet data
-                    let Ok(console) = parse_xinfo(&recv_buf[..num_bytes], id) else {
+
+                // Skip if unable to parse packet data
+                let Ok(mut console) = parse_xinfo(&recv_buf[..num_bytes]) else {
+                    continue;
+                };
+
+                let discovered_consoles: Vec<X32Console>;
+
+                {
+                    let discovered = self.discovered.lock().await;
+                    discovered_consoles = discovered.values().cloned().collect();
+                }
+
+
+                // Skip adding if already present
+                if let Some(existing) = discovered_consoles.iter().find(|&disc| {disc == &console}) {
+                    last_scan_ids.push(existing.id);
+                } else {
+                    // Only proceed to add board if we can make an ID for it
+                    let Ok(id) = self.gen_id().await else {
                         continue;
                     };
-                    // Skip if unable to lock Mutex on discovery list
-                    if let Ok(mut discovered) = self.discovered.lock() {
-                        let discovered_consoles: Vec<&X32Console> = discovered.values().collect();
-                        // Mark ID as seen this scan cycle
-                        last_scan_ids.push(console.id);
-                        // Skip adding if already present
-                        if !discovered_consoles.contains(&&console) {
-                            discovered.insert(console.id, console);
-                        }
+                    console.id = id;
+                    last_scan_ids.push(console.id);
 
-                        drop(discovered);
+                    {
+                        let mut discovered = self.discovered.lock().await;
+                        discovered.insert(console.id, console);
                     }
                 }
             }
         }
 
         // Remove options not seen this scan unless currently connected
-        if let (Ok(mut discovered), Ok(connection)) = (self.discovered.lock(), self.curr_connection.lock()) {
-            discovered.retain(|&k, _| {
-                last_scan_ids.contains(&k) || match &*connection {
-                    Some(con) if con.console.id == k => true,
-                    _ => false,
-                }
-            })
-        }
-
+        let (mut discovered, connection) = (self.discovered.lock().await, self.curr_connection.lock().await);
+        discovered.retain(|&k, _| {
+            last_scan_ids.contains(&k) || match &*connection {
+                Some(con) if con.console.id == k => true,
+                _ => false,
+            }
+        })
     }
 
     // Creates a new connection to the discovered console with the specified ID
@@ -189,7 +194,7 @@ impl ConnectionManager {
         let console;
         {
             // Trick to only lock one Mutex at a time by putting this in a separate scope block
-            let discovered = self.discovered.lock()?;
+            let discovered = self.discovered.lock().await;
 
             // Only connect if id is still valid
             let Some(console_with_id) = discovered.get(&id) else {
@@ -205,7 +210,7 @@ impl ConnectionManager {
 
         let new_con = Connection::new(console, interface.clone(), app).await?;
 
-        let mut connection = self.curr_connection.lock()?;
+        let mut connection = self.curr_connection.lock().await;
 
         if let Some(con) = &*connection {
             con.disconnect();
@@ -218,20 +223,48 @@ impl ConnectionManager {
     }
 
     // Disconnects the current console connection
-    pub fn disconnect(&self) {
-        let Ok(connection) = self.curr_connection.lock() else {
-            return;
-        };
+    pub async fn disconnect(&self) {
+        let mut connection = self.curr_connection.lock().await;
 
-        if let Some(connection) = &*connection {
-            connection.disconnect();
+        if let Some(con) = &*connection {
+            con.disconnect();
+            *connection = None;
         }
     }
 
-    fn gen_id(&self) -> CommandResult<u32> {
-        let Ok(discovered) = self.discovered.lock() else {
-            return Err(CommandError::Mutex);
+    pub async fn send_command(&self, command: X32OscMessage) -> CommandResult<()> {
+        let connection = self.curr_connection.lock().await;
+
+        let Some(connection) = &*connection else {
+            return Err(CommandError::InvalidOp(String::from("Not connected to a console")))
         };
+
+        connection.send_osc(command.get_message(), ReqType::Command).await;
+
+        Ok(())
+    }
+
+    pub async fn send_query(&self, query: X32OscMessage) -> CommandResult<OscMessage> {
+        let connection = self.curr_connection.lock().await;
+
+        if query.get_message().args.len() >= 1 {
+            return Err(CommandError::InvalidOp(String::from("Query for info may not have any arguments")))
+        }
+
+        let Some(connection) = &*connection else {
+            return Err(CommandError::InvalidOp(String::from("Not connected to a console")))
+        };
+
+        let (query_tx, query_rx) = tokio::sync::oneshot::channel();
+
+        connection.send_osc(query.get_message(), ReqType::Query(Some(query_tx))).await;
+
+        Ok(query_rx.await?)
+    }
+
+    async fn gen_id(&self) -> CommandResult<u32> {
+        let discovered = self.discovered.lock().await;
+
         // Probably this isn't the best way of generating unique IDs, but it should
         // be okay here
         let mut rng = rand::rng();
@@ -256,7 +289,7 @@ async fn bind_and_config (ip: IpAddr) -> std::io::Result<UdpSocket> {
     Ok(new_sock)
 }
 
-fn parse_xinfo (bytes: &[u8], board_id: &u32) -> CommandResult<X32Console> {
+fn parse_xinfo (bytes: &[u8]) -> CommandResult<X32Console> {
     let (_, osc_packet) = decoder::decode_udp(bytes)?;
     let OscPacket::Message(mut osc_message) = osc_packet else {
         return Err(CommandError::OSC(OscError::BadMessage("Expected an individual message as an xinfo response")));
@@ -281,7 +314,7 @@ fn parse_xinfo (bytes: &[u8], board_id: &u32) -> CommandResult<X32Console> {
         model,
         ip,
         version,
-        id: board_id.clone(),
+        id: 0,
     })
 }
 

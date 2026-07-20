@@ -2,6 +2,7 @@ use std::{fmt, io, net};
 use std::error::Error;
 use std::fmt::Display;
 use std::sync::PoisonError;
+use tokio::sync::oneshot::error::RecvError;
 
 #[derive(Debug)]
 pub enum CommandError {
@@ -66,15 +67,12 @@ impl From<net::AddrParseError> for CommandError {
     }
 }
 
+impl From<RecvError> for CommandError {
+    fn from(err: RecvError) -> Self {CommandError::OtherErr(Box::new(err))}
+}
+
 impl<T> From<PoisonError<T>> for CommandError {
     fn from(_: PoisonError<T>) -> Self {
         Self::Mutex
     }
 }
-
-impl From<Box<dyn Error>> for CommandError {
-    fn from(err: Box<dyn Error>) -> Self {
-        CommandError::OtherErr(err)
-    }
-}
-

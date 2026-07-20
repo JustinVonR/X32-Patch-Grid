@@ -11,7 +11,13 @@ async fn main() {
 }
 
 // TODO:
-//  - Implement queue with notifications for sending outgoing messages
-//  - Start on actual handling of connection event queues, channels, etc.
-//  - Handle board event subscription and implement connect/disconnect messages to UI status indicator
+//  - Check validity of OSC paths, build out more specific rules for doing this including needing exact paths for queries
+//    to get a response
+//  - Implement a timeout/limit # for unacknowledged packets
+//  - Review error handling of all connection errors, maybe close connection instead of continuing?
+//  - Add unit testing of parsing / validation functions, maybe doesn't make sense for network logic or tauri commands / async
+//  - Refactor and clean up before moving on to UI and Input/Output mapping logic
+
+// TODO: Bugs
+//  - Sending of /xinfo packets for scanning appears to freeze if a packet is currently sending to the board on loop
 

@@ -15,7 +15,6 @@ async function connect_console(id) {
   try {
     await invoke('connect', {id: id})
     connectedId.value = id;
-    console.log(`Connected to: ${connectedId.value}`)
   } catch (err) {
     console.log(`Couldn't connect to console: ${err}`)
   }

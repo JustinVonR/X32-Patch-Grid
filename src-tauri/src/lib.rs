@@ -1,11 +1,28 @@
 mod x32_osc;
 
+use rosc::{OscMessage};
 use tauri::{AppHandle, Manager, State};
 use x32_osc::ConnectionList;
 use x32_osc::ConnectionManager;
+use crate::x32_osc::X32OscMessage;
 
 struct AppData {
     osc_cons: ConnectionManager
+}
+
+#[tauri::command]
+async fn fetch(state: State<'_, AppData>, address: String) -> Result<(), String> {
+    let osc_fetch = OscMessage {
+        addr: address,
+        args: vec![],
+    };
+
+    let send_msg = X32OscMessage::new(osc_fetch)?;
+
+    let result = state.osc_cons.send_query(send_msg).await?;
+
+    println!("{:?}", result.args);
+    Ok(())
 }
 
 #[tauri::command]
@@ -27,7 +44,7 @@ async fn connect(app: AppHandle, state: State<'_, AppData>, id: u32) -> Result<(
 
 #[tauri::command]
 async fn disconnect(state: State<'_, AppData>) -> Result<(), String> {
-    state.osc_cons.disconnect();
+    state.osc_cons.disconnect().await;
     Ok(())
 }
 
@@ -41,7 +58,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan, connect, disconnect, get_connections])
+        .invoke_handler(tauri::generate_handler![scan, connect, disconnect, get_connections, fetch])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
