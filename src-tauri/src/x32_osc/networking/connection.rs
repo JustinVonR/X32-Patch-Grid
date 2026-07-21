@@ -300,7 +300,7 @@ async fn handle_incoming_osc(state: Arc<ConnectionState>, msg: OscMessage) {
                     };
 
                     // If other end has disconnected there will never be a way to send the result. Continue as normal.
-                    let _ = resp_tx.send(acked_message.osc_msg.clone());
+                    let _ = resp_tx.send(msg.clone());
 
                     acked_message.sent_num -= 1;
                     acked_message.first_ack_time = Some(SystemTime::now());
@@ -334,6 +334,11 @@ async fn handle_send_queue(state: Arc<ConnectionState>) {
             let mut queue = state.send_queue.lock().await;
             let Some(msg) = queue.front_mut() else {break};
             let Ok(message) = encode(&OscPacket::Message(msg.osc_msg.clone())) else {continue};
+
+            //Slow down if many packets have been unacknowledged, prevents overloading issues
+            if msg.sent_num > 10 {
+                sleep(Duration::from_secs(1)).await;
+            }
 
             // This will be tried again next loop, so don't need to review error
             if let Ok(_) =  state.socket.send(&message).await {

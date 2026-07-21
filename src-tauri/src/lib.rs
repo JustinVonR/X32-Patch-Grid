@@ -21,7 +21,12 @@ async fn fetch(state: State<'_, AppData>, address: String) -> Result<(), String>
 
     let result = state.osc_cons.send_query(send_msg).await?;
 
-    println!("{:?}", result.args);
+    print!("Received: {}", result.addr);
+    for arg in result.args {
+        print!(" {:?}", arg);
+    }
+    println!();
+    
     Ok(())
 }
 

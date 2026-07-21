@@ -154,6 +154,7 @@ impl ConnectionManager {
 
                 let discovered_consoles: Vec<X32Console>;
 
+
                 {
                     let discovered = self.discovered.lock().await;
                     discovered_consoles = discovered.values().cloned().collect();
@@ -179,14 +180,16 @@ impl ConnectionManager {
             }
         }
 
-        // Remove options not seen this scan unless currently connected
-        let (mut discovered, connection) = (self.discovered.lock().await, self.curr_connection.lock().await);
-        discovered.retain(|&k, _| {
-            last_scan_ids.contains(&k) || match &*connection {
-                Some(con) if con.console.id == k => true,
-                _ => false,
-            }
-        })
+        {
+            // Remove options not seen this scan unless currently connected
+            let (mut discovered, connection) = (self.discovered.lock().await, self.curr_connection.lock().await);
+            discovered.retain(|&k, _| {
+                last_scan_ids.contains(&k) || match &*connection {
+                    Some(con) if con.console.id == k => true,
+                    _ => false,
+                }
+            })
+        }
     }
 
     // Creates a new connection to the discovered console with the specified ID
@@ -245,19 +248,23 @@ impl ConnectionManager {
     }
 
     pub async fn send_query(&self, query: X32OscMessage) -> CommandResult<OscMessage> {
-        let connection = self.curr_connection.lock().await;
-
-        if query.get_message().args.len() >= 1 {
-            return Err(CommandError::InvalidOp(String::from("Query for info may not have any arguments")))
-        }
-
-        let Some(connection) = &*connection else {
-            return Err(CommandError::InvalidOp(String::from("Not connected to a console")))
-        };
-
         let (query_tx, query_rx) = tokio::sync::oneshot::channel();
+        {
+            let connection = self.curr_connection.lock().await;
 
-        connection.send_osc(query.get_message(), ReqType::Query(Some(query_tx))).await;
+            if query.get_message().args.len() >= 1 {
+                return Err(CommandError::InvalidOp(String::from("Query for info may not have any arguments")))
+            }
+
+            let Some(ref con) = *connection else {
+                return Err(CommandError::InvalidOp(String::from("Not connected to a console")))
+            };
+
+
+            con.send_osc(query.get_message(), ReqType::Query(Some(query_tx))).await;
+
+            drop(connection);
+        }
 
         Ok(query_rx.await?)
     }
