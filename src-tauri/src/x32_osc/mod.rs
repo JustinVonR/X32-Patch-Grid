@@ -1,6 +1,7 @@
 mod networking;
 mod types;
-pub mod errors;
+mod errors;
 
+pub use errors::*;
 pub use types::*;
 pub use networking::ConnectionManager;
