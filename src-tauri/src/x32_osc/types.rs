@@ -181,82 +181,32 @@ mod tests {
     mod x32_osc_command {
         use super::*;
 
-        const fn remove_slash(s: & 'static str) -> & 'static str {
-            let s = s.as_bytes().split_at(1).1;
-            match core::str::from_utf8(s) {
-                Ok(s) => s,
-                Err(_) => panic!(),
-            }
-        }
-
-        const VALID_CMDS: &[(&str, &[OscType])] = [
-            ("/config/userrout/out/01", [].as_slice()),
-            ("/config/userrout/out/02", [].as_slice()),
-            ("/config/userrout/in/01", [].as_slice()),
-            ("/config/userrout/in/05", [].as_slice()),
-            ("/config/routing/IN/1-8", [].as_slice()),
-            ("/config/routing/IN/9-16", [].as_slice()),
-            ("/config/routing/IN/AUX", [].as_slice()),
-            ("/config/routing/AES50A/1-8", [].as_slice()),
-            ("/config/routing/AES50A/9-16", [].as_slice()),
-            ("/config/routing/AES50B/1-8", [].as_slice()),
-            ("/config/routing/AES50B/9-16", [].as_slice()),
-            ("/config/routing/CARD/1-8", [].as_slice()),
-            ("/config/routing/CARD/9-16", [].as_slice()),
-            ("/config/routing/OUT/1-4", [].as_slice()),
-            ("/config/routing/OUT/5-8", [].as_slice()),
-            ("/config/routing/IN", [].as_slice()),
-        ].as_slice();
-
-
-        const INVALID_CMDS: &[(&str, &[OscType])] = [
-            ("/config/userrout/out/00", [].as_slice()),
-            ("/config/userrout/out/50", [].as_slice()),
-            ("/config/userrout/in/00", [].as_slice()),
-            ("/config/userrout/in/35", [].as_slice()),
-            ("/config/routing/IN/1-9", [].as_slice()),
-            ("/config/routing/IN/8-17", [].as_slice()),
-            ("/config/routing/IN/AUXS", [].as_slice()),
-            ("/config/routing/AES50C/1-8", [].as_slice()),
-            ("/config/routing/AES50C6", [].as_slice()),
-            ("/config/routing/AES50B/1-9", [].as_slice()),
-            ("/config/routing/AES50B/8-16", [].as_slice()),
-            ("/config/routing/CARD/1-10", [].as_slice()),
-            ("/config/routing/CARD/9-18", [].as_slice()),
-            ("/config/routing/OUT/1-8", [].as_slice()),
-            ("/config/routing/OUT/9-16", [].as_slice()),
-            ("/config/routing/OUT/", [].as_slice()),
-            ("/config/routing/OUT/1-4/", [].as_slice()),
-            ("/ch/01/gate/on", [].as_slice()),
-        ].as_slice();
-
-        const VALID_NO_SLASH_CMDS: [(&str, &[OscType]); VALID_CMDS.len()] = {
-            let mut out: [(&str, &[OscType]); VALID_CMDS.len()] = [("", &[OscType::Nil]); VALID_CMDS.len()];
-            let mut i = 0;
-            while i < VALID_CMDS.len() {
-                let cmd = &VALID_CMDS[i];
-                out[i] = (remove_slash(cmd.0), cmd.1);
-                i += 1;
-            }
-            out
-        };
-
-        const INVALID_NO_SLASH_CMDS: [(&str, &[OscType]); INVALID_CMDS.len()] = {
-            let mut out: [(&str, &[OscType]); INVALID_CMDS.len()] = [("", &[OscType::Nil]); INVALID_CMDS.len()];
-            let mut i = 0;
-            while i < INVALID_CMDS.len() {
-                let cmd = &INVALID_CMDS[i];
-                out[i] = (remove_slash(cmd.0), cmd.1);
-                i += 1;
-            }
-            out
-        };
-
         #[test]
         fn valid_query() -> Result<(), String> {
-            for cmd in VALID_CMDS {
-                let (addr, _) = cmd;
-                let msg = OscMessage::from(*addr);
+            let valid = [
+                "/config/userrout/out/01",
+                "/config/userrout/out/02",
+                "/config/userrout/in/01",
+                "/config/userrout/in/05",
+                "/config/routing/IN/1-8",
+                "/config/routing/IN/9-16",
+                "/config/routing/IN/AUX",
+                "/config/routing/AES50A/1-8",
+                "/config/routing/AES50A/9-16",
+                "/config/routing/AES50B/1-8",
+                "/config/routing/AES50B/9-16",
+                "/config/routing/CARD/1-8",
+                "/config/routing/CARD/9-16",
+                "/config/routing/OUT/1-4",
+                "/config/routing/OUT/5-8",
+                "/outputs/main/01/src",
+                "/outputs/main/16/pos",
+                "/outputs/aux/01/src",
+                "/outputs/aux/16/pos",
+            ];
+
+            for addr in valid {
+                let msg = OscMessage::from(addr);
                 let result = X32OscMessage::new(msg)?;
                 assert_eq!(result.message.addr, *addr)
             }
@@ -265,18 +215,40 @@ mod tests {
 
         #[test]
         fn invalid_query() -> Result<(), String> {
-            // Invalid addresses
-            for cmd in INVALID_CMDS {
-                let (addr, _) = cmd;
-                let msg = OscMessage::from(*addr);
-                let result = X32OscMessage::new(msg);
-                assert!(result.is_err());
-            }
+            let invalid = [
+                // Incorrect numbers or locations:
+                "/config/userrout/out/00",
+                "/config/userrout/out/50",
+                "/config/userrout/in/00",
+                "/config/userrout/in/35",
+                "/config/routing/IN/1-9",
+                "/config/routing/IN/8-17",
+                "/config/routing/IN/AUXS",
+                "/config/routing/AES50C/1-8",
+                "/config/routing/AES50C6",
+                "/config/routing/AES50B/1-9",
+                "/config/routing/AES50B/8-16",
+                "/config/routing/CARD/1-10",
+                "/config/routing/CARD/9-18",
+                "/config/routing/OUT/1-8",
+                "/config/routing/OUT/9-16",
+                "/config/routing/OUT/",
+                "/config/routing/OUT/1-4/",
+                "/outputs/main/00/src",
+                "/outputs/main/18/pos",
+                "/outputs/aux/01/src/",
+                "/outputs/aux/18/pos",
+                // Missing leading slash:
+                "config/routing/AES50B/1-8",
+                "config/routing/AES50B/9-16",
+                // Short path:
+                "/config/routing/IN",
+                // Path unrelated to this app:
+                "/ch/01/gate/on",
+            ];
 
-            // Shouldn't work if there is no / in front
-            for cmd in VALID_NO_SLASH_CMDS[0..5].iter() {
-                let (addr, _) = cmd;
-                let msg = OscMessage::from(*addr);
+            for addr in invalid {
+                let msg = OscMessage::from(addr);
                 let result = X32OscMessage::new(msg);
                 assert!(result.is_err());
             }
@@ -285,26 +257,141 @@ mod tests {
 
         #[test]
         fn valid_node_query() -> Result<(), String> {
-            for cmd in VALID_NO_SLASH_CMDS {
-                let (addr, _) = cmd;
+            let valid_node: &[&str] = [
+                // Full addrs:
+                "config/userrout/out/01",
+                "config/userrout/out/02",
+                "config/userrout/in/01",
+                "config/userrout/in/05",
+                // Node addr:
+                "config/userrout/in",
+                "config/routing/OUT"
+            ].as_slice();
+
+            for &addr in valid_node {
                 let msg = OscMessage {
                     addr: String::from("/node"),
                     args: vec![OscType::String(String::from(addr))],
                 };
                 let result = X32OscMessage::new(msg)?;
-                assert_eq!(result.message.args.len(), 1);
-                let OscType::String(str) = &result.message.args[0] else {
-                    return Err(String::from("Expected one String Argument"));
-                };
-                assert_eq!(str, addr)
+                assert_eq!(result.message.addr, "/node");
+                assert_eq!(result.message.args, vec![OscType::String(String::from(addr))]);
             }
             Ok(())
         }
 
         #[test]
         fn invalid_node_query() -> Result<(), String> {
-            //TODO: Implement This!
-            assert!(false);
+            let invalid_node: &[&str] = [
+                "/config/userrout/in/00",
+                "config/userrout/in/35",
+                "/config/routing/IN/1-9/",
+                "config/routing/IN/8-17",
+                "config/routing/IN/AUXS",
+                "config/routing",
+                "config/userrout/",
+            ].as_slice();
+
+            for &addr in invalid_node {
+                let msg = OscMessage {
+                    addr: String::from("/node"),
+                    args: vec![OscType::String(String::from(addr))],
+                };
+                let result = X32OscMessage::new(msg);
+                assert!(result.is_err());
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn valid_cmd() -> Result<(), String> {
+            let valid_cmds = [
+                ("/config/userrout/out/01", vec![OscType::Int(0)], "config/userrout/out/01 0"),
+                ("/config/userrout/out/02", vec![OscType::Int(184)], "config/userrout/out/02 184"),
+                ("/config/userrout/in/01", vec![OscType::Int(184)], "config/userrout/in/01 184"),
+                ("/config/userrout/in/05", vec![OscType::Int(184)], "config/userrout/in/05 184"),
+                ("/config/routing/IN/1-8", vec![OscType::Int(184)], "config/routing/IN/1-8 184"),
+                ("/config/routing/IN/9-16", vec![OscType::Int(184)], "config/routing/IN/9-16 184"),
+                ("/config/routing/IN/AUX", vec![OscType::Int(10)], "config/routing/IN/AUX 10"),
+                ("/config/routing/AES50A/1-8", vec![OscType::Int(0)], "config/routing/AES50A/1-8 0"),
+                ("/config/routing/AES50A/9-16", vec![OscType::Int(35)], "config/routing/AES50A/9-16 35"),
+                ("/config/routing/AES50B/1-8", vec![OscType::Int(0)], "config/routing/AES50B/1-8 0"),
+                ("/config/routing/AES50B/9-16", vec![OscType::Int(35)], "config/routing/AES50B/9-16 35"),
+                ("/config/routing/CARD/1-8", vec![OscType::Int(0)], "config/routing/CARD/1-8 0"),
+                ("/config/routing/CARD/9-16", vec![OscType::Int(35)], "config/routing/CARD/9-16 35"),
+                ("/config/routing/OUT/1-4", vec![OscType::Int(0)], "config/routing/OUT/1-4 0"),
+                ("/config/routing/OUT/5-8", vec![OscType::Int(35)], "config/routing/OUT/5-8 35"),
+                ("/outputs/main/01/src", vec![OscType::Int(10)], "outputs/main/01/src 10"),
+                ("/outputs/main/16/pos", vec![OscType::Int(8)], "outputs/main/16/pos 8"),
+                ("/outputs/aux/01/src", vec![OscType::Int(10)], "outputs/aux/01/src 10"),
+                ("/outputs/aux/16/pos", vec![OscType::Int(7)], "outputs/aux/16/pos 7"),
+            ];
+
+            for cmd in valid_cmds {
+                let (addr, args, node_str) = cmd;
+                let msg = OscMessage {
+                    addr: String::from(addr),
+                    args,
+                };
+                let result = X32OscMessage::new(msg)?;
+                assert_eq!(result.message.addr, "/");
+                assert_eq!(result.message.args.len(), 1);
+                let OscType::String(ref str) = result.message.args[0] else {
+                    return Err(String::from("Expected one string argument"));
+                };
+                assert_eq!(str, node_str);
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn invalid_cmd() -> Result<(), String> {
+            let invalid_cmds = [
+                // Incorrect numbers or locations:
+                ("/config/userrout/out/00", vec![OscType::Int(0)]),
+                ("/config/userrout/out/50", vec![OscType::Int(0)]),
+                ("/config/userrout/in/00", vec![OscType::Int(0)]),
+                ("/config/userrout/in/35", vec![OscType::Int(0)]),
+                ("/config/routing/IN/1-9", vec![OscType::Int(0)]),
+                ("/config/routing/IN/8-17", vec![OscType::Int(0)]),
+                ("/config/routing/IN/AUXS", vec![OscType::Int(0)]),
+                ("/config/routing/AES50C/1-8", vec![OscType::Int(0)]),
+                ("/config/routing/AES50C6", vec![OscType::Int(0)]),
+                ("/config/routing/AES50B/1-9", vec![OscType::Int(0)]),
+                ("/config/routing/AES50B/8-16", vec![OscType::Int(0)]),
+                ("/config/routing/CARD/1-10", vec![OscType::Int(0)]),
+                ("/config/routing/CARD/9-18", vec![OscType::Int(0)]),
+                ("/config/routing/OUT/1-8", vec![OscType::Int(0)]),
+                ("/config/routing/OUT/9-16", vec![OscType::Int(0)]),
+                ("/config/routing/OUT/", vec![OscType::Int(0)]),
+                ("/config/routing/OUT/1-4/", vec![OscType::Int(0)]),
+                ("/outputs/main/00/src", vec![OscType::Int(0)]),
+                ("/outputs/main/18/pos", vec![OscType::Int(0)]),
+                ("/outputs/aux/01/src/", vec![OscType::Int(0)]),
+                ("/outputs/aux/18/pos", vec![OscType::Int(0)]),
+                // Missing leading slash:
+                ("config/routing/AES50B/1-8", vec![OscType::Int(0)]),
+                ("config/routing/AES50B/9-16", vec![OscType::Int(0)]),
+                // Short path:
+                ("/config/routing/IN", vec![OscType::Int(0)]),
+                // Path unrelated to this app:
+                ("/ch/01/gate/on", vec![OscType::Int(0)]),
+                // Invalid args for address:
+                ("/config/userrout/out/01", vec![OscType::Int(-1)]),
+                ("/config/userrout/out/02", vec![OscType::Int(300)]),
+                ("/config/routing/OUT/1-4", vec![OscType::Int(-5)]),
+                ("/config/routing/OUT/5-8", vec![OscType::Int(50)]),
+            ];
+
+            for cmd in invalid_cmds {
+                let (addr, args) = cmd;
+                let msg = OscMessage {
+                    addr: String::from(addr),
+                    args,
+                };
+                let result = X32OscMessage::new(msg);
+                assert!(result.is_err());
+            }
             Ok(())
         }
 
@@ -316,21 +403,7 @@ mod tests {
         }
 
         #[test]
-        fn valid_cmd() -> Result<(), String> {
-            //TODO: Implement This!
-            assert!(false);
-            Ok(())
-        }
-
-        #[test]
         fn invalid_node_cmd() -> Result<(), String> {
-            //TODO: Implement This!
-            assert!(false);
-            Ok(())
-        }
-
-        #[test]
-        fn invalid_cmd() -> Result<(), String> {
             //TODO: Implement This!
             assert!(false);
             Ok(())
