@@ -397,15 +397,89 @@ mod tests {
 
         #[test]
         fn valid_node_cmd() -> Result<(), String> {
-            //TODO: Implement This!
-            assert!(false);
+            let valid_node_cmds = [
+                "config/userrout/out/01 0",
+                "config/userrout/out/02 184",
+                "config/userrout/in/01 184",
+                "config/userrout/in/05 184",
+                "config/routing/IN/1-8 184",
+                "config/routing/IN/9-16 184",
+                "outputs/aux/16/pos 7",
+                // Full node set commands
+                "config/userrout/out 0 1 2 3 4 5 6 7 8 9",
+                "config/userrout/in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32",
+                "config/routing/IN 0 0 0 0",
+                "config/routing/AES50A 0 1 2 3 4 5",
+                "config/routing/AES50B 0 1 2",
+                "config/routing/CARD 0 1 4 8",
+                "config/routing/OUT 1 2 3 5",
+                "outputs/aux/05 0 0",
+                "outputs/main/14 6 1",
+            ];
+
+            for cmd in valid_node_cmds {
+                let msg = OscMessage {
+                    addr: String::from("/"),
+                    args: vec![OscType::String(String::from(cmd))],
+                };
+                let Ok(result) = X32OscMessage::new(msg) else {
+                    return Err(String::from("Path should be a valid command"))
+                };
+                assert_eq!(result.message.addr, "/");
+                assert_eq!(result.message.args.len(), 1);
+                let OscType::String(arg) = &result.message.args[0] else {
+                    return Err(String::from("Expected node command to have one string"))
+                };
+                assert_eq!(arg, cmd);
+            }
             Ok(())
         }
 
         #[test]
         fn invalid_node_cmd() -> Result<(), String> {
-            //TODO: Implement This!
-            assert!(false);
+            let invalid_node_cmds = [
+                // Incorrect numbers or locations:
+                "config/userrout/out/00",
+                "config/userrout/out/50",
+                "config/userrout/in/00",
+                "config/userrout/in/35",
+                "config/routing/IN/1-9",
+                "config/routing/IN/8-17",
+                "config/routing/IN/AUXS",
+                "config/routing/AES50C/1-8",
+                "config/routing/AES50C6",
+                "config/routing/AES50B/1-9",
+                "config/routing/AES50B/8-16",
+                "config/routing/CARD/1-10",
+                "config/routing/CARD/9-18",
+                "config/routing/OUT/1-8",
+                "config/routing/OUT/9-16 0",
+                "config/routing/OUT/ 0",
+                "config/routing/OUT/1-4/ 0",
+                "outputs/main/00/src 0",
+                "outputs/main/18/pos 0",
+                "outputs/aux/01/src/ 0",
+                "outputs/aux/18/pos 0",
+                // Path unrelated to this app:
+                "ch/01/gate/on 0",
+                // Invalid args for address:
+                "config/userrout/out/01 -1",
+                "config/userrout/out/02 300",
+                "config/routing/OUT/1-4 -5",
+                "config/routing/OUT/5-8 50",
+                // TODO: Add cases for more args than node can handle
+                //  and eliminate some unneeded cases, generally check that all the
+                //  the tests are correct
+            ];
+
+            for cmd in invalid_node_cmds {
+                let msg = OscMessage {
+                    addr: String::from("/"),
+                    args: vec![OscType::String(String::from(cmd))],
+                };
+                let result = X32OscMessage::new(msg);
+                assert!(result.is_err());
+            }
             Ok(())
         }
 
