@@ -41,75 +41,315 @@ pub enum ReqType {
     Query(Option<oneshot::Sender<OscMessage>>),
 }
 
-const ALLOWED_PARAM_ADDRS: [&str; 4] = [
-    "/xinfo",
-    "/xremote",
-    "/config/routing/",
-    "/config/userrout/",
-];
-
-
-/// Return whether the address starts with an allowed path for this application
-fn match_addr(addr: &String) -> bool {
-    for allowed in ALLOWED_PARAM_ADDRS {
-        if let Some(0) = addr.find(&allowed) {
-            return true;
-        }
-    }
-    false
-}
-
 /// Re-packages an OscMessage to ensure that the connection can use it properly.
 pub struct X32OscMessage {
     message: OscMessage,
 }
 
-//TODO: This is not an exhaustive validation of exact commands, only a rough check
 impl X32OscMessage {
     /// Puts the input OscMessage into an X32OscMessage after packaging any message with args (assumed to be a set command rather than a request) as
     /// a node set command with path "/". This ensures it will be acknowledged by the other side of the connection
     pub fn new(msg: OscMessage) -> CommandResult<X32OscMessage> {
-        if msg.addr == "/" {
-            if msg.args.len() == 1 && matches![msg.args[1], OscType::String(_)] {
-                Ok(X32OscMessage {
-                    message: msg,
-                })
-            } else {
-                Err(CommandError::InvalidOp(String::from("Set node command should have exactly one string as an argument")))
-            }
-        } else if match_addr(&msg.addr) {
-            // Repackage as a node set if trying to set parameters, that way the board echoes it
-            if msg.args.len() >= 1 {
-                let mut node_string = String::from("");
-
-                node_string.push_str(&msg.addr);
-
-                for arg in msg.args {
-                    match arg {
-                        OscType::Int(i) => node_string.push_str(&(" ".to_string() + &i.to_string())),
-                        _ => return Err(CommandError::InvalidOp(String::from("Unsupported OSC type for X32 IO Operations"))),
+        match msg.addr.as_str() {
+            // Handle special message types by throwing away any arguments and returning a wrapped message
+            "/xremote" => Ok(X32OscMessage {message: OscMessage::from(String::from("/xremote"))}),
+            "/status" => Ok(X32OscMessage {message: OscMessage::from(String::from("/status"))}),
+            "/xinfo" => Ok(X32OscMessage {message: OscMessage::from(String::from("/xinfo"))}),
+            // For node queries, unwrap to an address and check that no args are present before validating
+            "/node" => {
+                if msg.args.len() == 1 && let OscType::String(node_query) = msg.args[0].clone() {
+                    if let Some(_) = node_query.find(" ") {
+                        Err(CommandError::Parse(String::from("Node query's address should not have any spaces")))
+                    } else if validate_msg(&node_query, &Vec::new(), false, true) {
+                        Ok(X32OscMessage {
+                            message: msg,
+                        })
+                    } else {
+                        Err(CommandError::Parse(String::from("Invalid node to query for IO operations")))
                     }
+                } else {
+                    Err(CommandError::Parse(String::from("Node query message should only have one String as an argument")))
                 }
-
-                Ok(X32OscMessage {
-                    message: OscMessage {
-                        addr: String::from("/"),
-                        args: vec![OscType::String(node_string)],
+            },
+            // For node commands, check that at least one arg exists, unwrap to an address and arg vector, and validate
+            "/" => {
+                if msg.args.len() == 1 && let OscType::String(node_cmd) = msg.args[0].clone() {
+                    if let Some((addr, arg_str)) = node_cmd.split_once(" ") {
+                        let arg_vec = unpack_osc_args(&arg_str);
+                        if validate_msg(&String::from(addr), &arg_vec, true, true) {
+                            Ok(X32OscMessage {
+                                message: msg,
+                            })
+                        } else {
+                            Err(CommandError::Parse(String::from("Invalid node address / args for IO operations")))
+                        }
+                    } else {
+                        Err(CommandError::Parse(String::from("Node command must have arguments")))
                     }
-                })
-            } else {
-                Ok(X32OscMessage {
-                    message: msg,
-                })
+                } else {
+                    Err(CommandError::Parse(String::from("Node query message should only have one String as an argument")))
+                }
+            },
+            // Everything else should be a non-node style message
+            addr => {
+                if addr.chars().collect::<Vec<char>>()[0] == '/' && let Some((_, path)) = addr.split_once("/") {
+                    // Handle as a command and convert to node style if args are present
+                    if msg.args.len() >= 1 {
+                        if validate_msg(&String::from(path), &msg.args, true, false) {
+                            make_node_cmd(msg)
+                        } else {
+                            Err(CommandError::Parse(String::from("Invalid single command path / args for IO operations")))
+                        }
+                    // Only check address for query if no args present
+                    } else {
+                        if validate_msg(&String::from(path), &msg.args, false, false) {
+                            Ok(X32OscMessage {
+                                message: msg,
+                            })
+                        } else {
+                            Err(CommandError::Parse(String::from("Invalid single query path for IO operations")))
+                        }
+                    }
+                } else {
+                    Err(CommandError::Parse(String::from("Regular command address should start with a '/'")))
+                }
             }
-        } else {
-            Err(CommandError::InvalidOp(String::from("Invalid OSC address for X32 IO Operations")))
         }
     }
 
     pub fn get_message(&self) -> OscMessage {
         self.message.clone()
     }
+}
+
+fn unpack_osc_args(arg_str: &str) -> Vec<OscType> {
+    let mut args: Vec<OscType> = Vec::new();
+
+    for arg in arg_str.split(" ") {
+        if let Ok(i) = arg.parse::<i32>() {
+            args.push(OscType::Int(i));
+        } else if let Ok(f) = arg.parse::<f32>() {
+            args.push(OscType::Float(f))
+        } else {
+            args.push(OscType::String(arg.to_string()))
+        }
+    }
+
+    args
+}
+
+fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node_addrs: bool) -> bool {
+    let input_opt_reg = [
+        "AN1-8", "AN9-16", "AN17-24", "AN25-32",
+        "A1-8", "A9-16", "A17-24", "A25-32", "A33-40", "A41-48",
+        "B1-8", "B9-16", "B17-24", "B25-32", "B33-40", "B41-48",
+        "CARD1-8", "CARD9-16", "CARD17-24", "CARD25-32",
+        "UIN1-8", "UIN9-16", "UIN17-24", "UIN25-32",
+    ];
+    let input_opt_aux = [
+        "AUX1-4",
+        "AN1-2", "AN1-4", "AN1-6",
+        "A1-2", "A1-4", "A1-6",
+        "B1-2", "B1-4", "B1-6",
+        "CARD1-2", "CARD1-4", "CARD1-6",
+        "UIN1-2", "UIN1-4", "UIN1-6"
+    ];
+    let output_opt_reg = [
+        "AN1-8", "AN9-16", "AN17-24", "AN25-32",
+        "A1-8", "A9-16", "A17-24", "A25-32", "A33-40", "A41-48",
+        "B1-8", "B9-16", "B17-24", "B25-32", "B33-40", "B41-48",
+        "CARD1-8", "CARD9-16", "CARD17-24", "CARD25-32",
+        "OUT1-8", "OUT9-16",
+        "P161-8", "P169-16",
+        "AUX1-6/Mon", "AuxIN1-6/TB",
+        "UOUT1-8", "UOUT9-16", "UOUT17-24", "UOUT25-32", "UOUT33-40", "UOUT41-48",
+        "UIN1-8", "UIN9-16", "UIN17-24", "UIN25-32",
+    ];
+
+    let addr_tokens: Vec<&str> = addr.split("/").collect();
+
+    match addr_tokens.get(0) {
+        Some(&"config") => {
+            match addr_tokens.get(1) {
+                // TODO: Implement logic for /config/userrout/in and /config/userrout/out
+                Some(&"userrout") => {
+                    match addr_tokens.get(2) {
+                        Some(&"out") => {
+                            match addr_tokens.get(3) {
+                                Some(_) => {false},
+                                None => {false},
+                            }
+                        },
+                        Some(&"in") => {
+                            match addr_tokens.get(3) {
+                                Some(_) => {false},
+                                None => {false},
+                            }
+                        },
+                        Some(_) => {false},
+                        None => {false},
+                    }
+                },
+                Some(&"routing") => {
+                    match addr_tokens.get(2) {
+                        Some(&"IN") | Some(&"PLAY") => {
+                            match addr_tokens.get(3) {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 23) || enum_in_list(args.get(0), &input_opt_reg)))
+                                },
+                                Some(&"AUX") => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 15) || enum_in_list(args.get(0), &input_opt_aux)))
+                                }
+                                Some(_) => {false},
+                                // Check that node type is a query of this address or has the right number / type of args
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 32 {
+                                                    return false;
+                                                } else if idx == 32 && !(int_in_range(Some(arg), 0, 15) || enum_in_list(Some(arg), &input_opt_aux)) {
+                                                    return false;
+                                                } else if !(int_in_range(Some(arg), 0, 23) || enum_in_list(Some(arg), &input_opt_reg)) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
+                            }
+                        },
+                        Some(&"AES50A") | Some(&"AES50B") => {
+                            match addr_tokens.get(3) {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32", "33-40", "41-48"].contains(val) => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)))
+                                },
+                                Some(_) => {false},
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 5 {
+                                                    return false;
+                                                } else if !(int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
+                            }
+                        },
+                        Some(&"CARD") => {
+                            match addr_tokens.get(3) {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)))
+                                },
+                                Some(_) => {false},
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 3 {
+                                                    return false;
+                                                } else if !(int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
+                            }
+                        }
+                        // TODO: This one section of /config/routing is not finished
+                        Some(&"OUT") => {
+                            match addr_tokens.get(3) {
+                                Some(_) => {false},
+                                None => {false},
+                            }
+                        },
+                        Some(_) => {false},
+                        None => {false},
+                    }
+                },
+                Some(_) => {false},
+                None => {false},
+            }
+        },
+        // TODO: Implement /outputs validation logic
+        Some(&"outputs") => {
+            match addr_tokens.get(1) {
+                Some(&"main") => {
+                    false
+                },
+                Some(&"aux") => {
+                    false
+                },
+                Some(_) => {false},
+                None => {false},
+            }
+        },
+        Some(_) => {false},
+        None => {false},
+    }
+}
+
+fn int_in_range(arg: Option<&OscType>, min: i32, max: i32) -> bool {
+    if let Some(OscType::Int(int)) = arg {
+        if int <= &max && int >= &min {
+            true
+        } else {false}
+    } else {
+        false
+    }
+}
+
+fn enum_in_list(arg: Option<&OscType>, list: &[&str]) -> bool {
+    if let Some(OscType::String(s)) = arg {
+        list.contains(&s.as_str())
+    } else {
+        false
+    }
+}
+
+/// Converts a standard X32 command into a node style command so that it will be acknowledged when
+/// sent to the X32 console rather than being silently accepted.
+fn make_node_cmd(msg: OscMessage) -> Result<X32OscMessage, CommandError> {
+    if msg.args.len() >= 1 {
+        let mut node_string = String::from("");
+
+        node_string.push_str(&msg.addr);
+
+        for arg in msg.args {
+            match arg {
+                OscType::Int(i) => node_string.push_str(&(" ".to_string() + &i.to_string())),
+                OscType::Float(f) => node_string.push_str(&(" ".to_string() + &f.to_string())),
+                OscType::String(s) => node_string.push_str(&(" ".to_string() + &s)),
+                _ => return Err(CommandError::InvalidOp(String::from("Unsupported OSC type for X32 IO Operations"))),
+            }
+        }
+
+        Ok(X32OscMessage {
+            message: OscMessage {
+                addr: String::from("/"),
+                args: vec![OscType::String(node_string)],
+            }
+        })
+    } else {
+        Ok(X32OscMessage {
+            message: msg,
+        })
+    }
+}
+
+/// Returns the string representing an integer as two digits with
+/// a leading 0 if needed. Used to check command or query paths more easily
+/// by mapping a range of integers.
+fn two_digit_string(int: i32) -> String {
+    format!("{:02}", int)
 }
 
 #[cfg(test)]
@@ -467,9 +707,14 @@ mod tests {
                 "config/userrout/out/02 300",
                 "config/routing/OUT/1-4 -5",
                 "config/routing/OUT/5-8 50",
-                // TODO: Add cases for more args than node can handle
-                //  and eliminate some unneeded cases, generally check that all the
-                //  the tests are correct
+                "outputs/main/01 56 10",
+                // Too many args for address:
+                "config/userrout/out 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49",
+                "config/routing/OUT 32 31 0",
+                "outputs/main/01 50 7 0 1 0.300 5",
+                // Invalid Node:
+                "outputs/main 1",
+                "config/userrout 1",
             ];
 
             for cmd in invalid_node_cmds {
