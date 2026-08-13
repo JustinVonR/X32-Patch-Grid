@@ -167,6 +167,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
     ];
 
     let addr_tokens: Vec<&str> = addr.split("/").collect();
+    let num_tokens = addr_tokens.len();
 
     match addr_tokens.get(0) {
         Some(&"config") => {
@@ -175,12 +176,13 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                     match addr_tokens.get(2) {
                         Some(&"out") => {
                             match addr_tokens.get(3) {
-                                Some(val) => {
-                                    let out_range = (0 ..= 48).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                                Some(val) if num_tokens == 4 => {
+                                    let out_range = (1 ..= 48).map(|x| two_digit_string(x)).collect::<Vec<String>>();
                                     if out_range.contains(&val.to_string()) {
                                         !check_args || args.len() == 1 && int_in_range(args.get(0), 0, 208)
                                     } else {false}
                                 },
+                                Some(_) => {false},
                                 None => {
                                     if allow_node_addrs {
                                         if check_args {
@@ -199,12 +201,13 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                         },
                         Some(&"in") => {
                             match addr_tokens.get(3) {
-                                Some(val) => {
-                                    let in_range = (0 ..= 32).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                                Some(val) if num_tokens == 4 => {
+                                    let in_range = (1 ..= 32).map(|x| two_digit_string(x)).collect::<Vec<String>>();
                                     if in_range.contains(&val.to_string()) {
                                         !check_args || args.len() == 1 && int_in_range(args.get(0), 0, 168)
                                     } else {false}
                                 },
+                                Some(_) => {false}
                                 None => {
                                     if allow_node_addrs {
                                         if check_args {
@@ -229,10 +232,10 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                     match addr_tokens.get(2) {
                         Some(&"IN") | Some(&"PLAY") => {
                             match addr_tokens.get(3) {
-                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) => {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) && num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 23) || enum_in_list(args.get(0), &input_opt_reg)))
                                 },
-                                Some(&"AUX") => {
+                                Some(&"AUX") if num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 15) || enum_in_list(args.get(0), &input_opt_aux)))
                                 }
                                 Some(_) => {false},
@@ -257,7 +260,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                         },
                         Some(&"AES50A") | Some(&"AES50B") => {
                             match addr_tokens.get(3) {
-                                Some(val) if ["1-8", "9-16", "17-24", "25-32", "33-40", "41-48"].contains(val) => {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32", "33-40", "41-48"].contains(val) && num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)))
                                 },
                                 Some(_) => {false},
@@ -279,7 +282,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                         },
                         Some(&"CARD") => {
                             match addr_tokens.get(3) {
-                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) => {
+                                Some(val) if ["1-8", "9-16", "17-24", "25-32"].contains(val) && num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)))
                                 },
                                 Some(_) => {false},
@@ -325,10 +328,10 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                             ];
 
                             match addr_tokens.get(3) {
-                                Some(val) if ["1-4", "9-12"].contains(val) => {
+                                Some(val) if ["1-4", "9-12"].contains(val) && num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &valid_opt_first_half)))
                                 },
-                                Some(val) if ["5-8", "13-16"].contains(val) => {
+                                Some(val) if ["5-8", "13-16"].contains(val) && num_tokens == 4 => {
                                     !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &valid_opt_sec_half)))
                                 },
                                 Some(_) => {false},
@@ -358,15 +361,120 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                 None => {false},
             }
         },
-        // TODO: Implement /outputs validation logic
         Some(&"outputs") => {
+            let valid_tap_points = [
+                "IN/LC", "IN/LC+M", "<-EQ", "<-EQ+M", "EQ->", "EQ->+M", "PRE", "PRE+M", "POST",
+            ];
+            let valid_toggle = ["OFF", "ON"];
             match addr_tokens.get(1) {
                 Some(&"main") => {
-                    let out_range = (0 ..= 48).map(|x| two_digit_string(x)).collect::<Vec<String>>();
-                    false
+                    let main_range = (1 ..= 16).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                    match addr_tokens.get(2) {
+                        Some(val) if main_range.contains(&val.to_string()) => {
+                            match addr_tokens.get(3) {
+                                Some(&"src") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && int_in_range(args.get(0), 0, 76))
+                                },
+                                Some(&"pos") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 8) || enum_in_list(args.get(0), &valid_tap_points)))
+                                },
+                                Some(&"invert") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 1) || enum_in_list(args.get(0), &valid_toggle)))
+                                },
+                                Some(&"delay") => {
+                                    match addr_tokens.get(4) {
+                                        Some(&"on") if num_tokens == 5 => {
+                                            !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 1) || enum_in_list(args.get(0), &valid_toggle)))
+                                        },
+                                        Some(&"time") if num_tokens == 5 => {
+                                            !check_args || (args.len() == 1 && is_x32_float(args.get(0), 0.300, 500.000, 0.100))
+                                        },
+                                        Some(_) => {false},
+                                        None => {
+                                            if allow_node_addrs {
+                                                if check_args {
+                                                    for (idx, arg) in args.iter().enumerate() {
+                                                        if idx > 1 {
+                                                            return false;
+                                                        } else if idx == 0 && !(int_in_range(Some(arg), 0, 1) || enum_in_list(Some(arg), &valid_toggle)) {
+                                                            return false;
+                                                        } else if !is_x32_float(Some(arg), 0.300, 500.000, 0.100) {
+                                                            return false;
+                                                        }
+                                                    }
+                                                    true
+                                                } else {true}
+                                            } else {false}
+                                        },
+                                    }
+                                },
+                                Some(_) => {false},
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 4 {
+                                                    return false;
+                                                } else if idx == 0 && !int_in_range(Some(arg), 0, 76) {
+                                                    return false;
+                                                } else if idx == 1 && !(int_in_range(Some(arg), 0, 8) || enum_in_list(Some(arg), &valid_tap_points)) {
+                                                    return false;
+                                                } else if idx == 2 && !(int_in_range(Some(arg), 0, 1) || enum_in_list(Some(arg), &valid_toggle)) {
+                                                    return false;
+                                                } else if idx == 3 && !(int_in_range(Some(arg), 0, 1) || enum_in_list(Some(arg), &valid_toggle)) {
+                                                    return false;
+                                                } else if idx == 4 && !is_x32_float(Some(arg), 0.300, 500.000, 0.100) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
+                            }
+                        },
+                        Some(_) => {false},
+                        None => {false},
+                    }
                 },
                 Some(&"aux") => {
-                    false
+                    let aux_range = (1 ..= 6).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                    match addr_tokens.get(2) {
+                        Some(val) if aux_range.contains(&val.to_string()) => {
+                            match addr_tokens.get(3) {
+                                Some(&"src") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && int_in_range(args.get(0), 0, 76))
+                                },
+                                Some(&"pos") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 8) || enum_in_list(args.get(0), &valid_tap_points)))
+                                },
+                                Some(&"invert") if num_tokens == 4 => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 1) || enum_in_list(args.get(0), &valid_toggle)))
+                                },
+                                Some(_) => {false},
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 2 {
+                                                    return false;
+                                                } else if idx == 0 && !int_in_range(Some(arg), 0, 76) {
+                                                    return false;
+                                                } else if idx == 1 && !(int_in_range(Some(arg), 0, 8) || enum_in_list(Some(arg), &valid_tap_points)) {
+                                                    return false;
+                                                } else if idx == 2 && !(int_in_range(Some(arg), 0, 1) || enum_in_list(Some(arg), &valid_toggle)) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
+                            }
+                        },
+                        Some(_) => {false},
+                        None => {false},
+                    }
                 },
                 Some(_) => {false},
                 None => {false},
@@ -390,6 +498,14 @@ fn int_in_range(arg: Option<&OscType>, min: i32, max: i32) -> bool {
 fn enum_in_list(arg: Option<&OscType>, list: &[&str]) -> bool {
     if let Some(OscType::String(s)) = arg {
         list.contains(&s.as_str())
+    } else {
+        false
+    }
+}
+
+fn is_x32_float(arg: Option<&OscType>, min: f32, max: f32, step_size: f32) -> bool {
+    if let Some(OscType::Float(f)) = arg {
+        f >= &min && f <= &max && f % &step_size < 1e-12
     } else {
         false
     }
@@ -523,7 +639,7 @@ mod tests {
                 "/outputs/main/01/src",
                 "/outputs/main/16/pos",
                 "/outputs/aux/01/src",
-                "/outputs/aux/16/pos",
+                "/outputs/aux/06/pos",
             ];
 
             for addr in valid {
@@ -629,10 +745,10 @@ mod tests {
             let valid_cmds = [
                 ("/config/userrout/out/01", vec![OscType::Int(0)], "config/userrout/out/01 0"),
                 ("/config/userrout/out/02", vec![OscType::Int(184)], "config/userrout/out/02 184"),
-                ("/config/userrout/in/01", vec![OscType::Int(184)], "config/userrout/in/01 184"),
-                ("/config/userrout/in/05", vec![OscType::Int(184)], "config/userrout/in/05 184"),
-                ("/config/routing/IN/1-8", vec![OscType::Int(184)], "config/routing/IN/1-8 184"),
-                ("/config/routing/IN/9-16", vec![OscType::Int(184)], "config/routing/IN/9-16 184"),
+                ("/config/userrout/in/01", vec![OscType::Int(165)], "config/userrout/in/01 165"),
+                ("/config/userrout/in/05", vec![OscType::Int(168)], "config/userrout/in/05 168"),
+                ("/config/routing/IN/1-8", vec![OscType::Int(2)], "config/routing/IN/1-8 2"),
+                ("/config/routing/IN/9-16", vec![OscType::Int(23)], "config/routing/IN/9-16 23"),
                 ("/config/routing/IN/AUX", vec![OscType::Int(10)], "config/routing/IN/AUX 10"),
                 ("/config/routing/AES50A/1-8", vec![OscType::Int(0)], "config/routing/AES50A/1-8 0"),
                 ("/config/routing/AES50A/9-16", vec![OscType::Int(35)], "config/routing/AES50A/9-16 35"),
@@ -645,7 +761,7 @@ mod tests {
                 ("/outputs/main/01/src", vec![OscType::Int(10)], "outputs/main/01/src 10"),
                 ("/outputs/main/16/pos", vec![OscType::Int(8)], "outputs/main/16/pos 8"),
                 ("/outputs/aux/01/src", vec![OscType::Int(10)], "outputs/aux/01/src 10"),
-                ("/outputs/aux/16/pos", vec![OscType::Int(7)], "outputs/aux/16/pos 7"),
+                ("/outputs/aux/06/pos", vec![OscType::Int(7)], "outputs/aux/06/pos 7"),
             ];
 
             for cmd in valid_cmds {
@@ -721,20 +837,20 @@ mod tests {
             let valid_node_cmds = [
                 "config/userrout/out/01 0",
                 "config/userrout/out/02 184",
-                "config/userrout/in/01 184",
-                "config/userrout/in/05 184",
-                "config/routing/IN/1-8 184",
-                "config/routing/IN/9-16 184",
-                "outputs/aux/16/pos 7",
+                "config/userrout/in/01 0",
+                "config/userrout/in/05 168",
+                "config/routing/IN/1-8 0",
+                "config/routing/IN/9-16 23",
+                "outputs/aux/06/pos 7",
                 // Full node set commands
                 "config/userrout/out 0 1 2 3 4 5 6 7 8 9",
-                "config/userrout/in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32",
+                "config/userrout/in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31",
                 "config/routing/IN 0 0 0 0",
                 "config/routing/AES50A 0 1 2 3 4 5",
                 "config/routing/AES50B 0 1 2",
                 "config/routing/CARD 0 1 4 8",
                 "config/routing/OUT 1 2 3 5",
-                "outputs/aux/05 0 0",
+                "outputs/aux/05 0 6",
                 "outputs/main/14 6 1",
             ];
 
@@ -791,7 +907,7 @@ mod tests {
                 "outputs/main/01 56 10",
                 // Too many args for address:
                 "config/userrout/out 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49",
-                "config/routing/OUT 32 31 0",
+                "config/routing/OUT 32 31 35 34 1",
                 "outputs/main/01 50 7 0 1 0.300 5",
                 // Invalid Node:
                 "outputs/main 1",
