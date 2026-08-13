@@ -171,19 +171,54 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
     match addr_tokens.get(0) {
         Some(&"config") => {
             match addr_tokens.get(1) {
-                // TODO: Implement logic for /config/userrout/in and /config/userrout/out
                 Some(&"userrout") => {
                     match addr_tokens.get(2) {
                         Some(&"out") => {
                             match addr_tokens.get(3) {
-                                Some(_) => {false},
-                                None => {false},
+                                Some(val) => {
+                                    let out_range = (0 ..= 48).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                                    if out_range.contains(&val.to_string()) {
+                                        !check_args || args.len() == 1 && int_in_range(args.get(0), 0, 208)
+                                    } else {false}
+                                },
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 47 {
+                                                    return false;
+                                                } else if !int_in_range(Some(arg), 0, 208) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
                             }
                         },
                         Some(&"in") => {
                             match addr_tokens.get(3) {
-                                Some(_) => {false},
-                                None => {false},
+                                Some(val) => {
+                                    let in_range = (0 ..= 32).map(|x| two_digit_string(x)).collect::<Vec<String>>();
+                                    if in_range.contains(&val.to_string()) {
+                                        !check_args || args.len() == 1 && int_in_range(args.get(0), 0, 168)
+                                    } else {false}
+                                },
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 31 {
+                                                    return false;
+                                                } else if !int_in_range(Some(arg), 0, 168) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
                             }
                         },
                         Some(_) => {false},
@@ -232,7 +267,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                                             for (idx, arg) in args.iter().enumerate() {
                                                 if idx > 5 {
                                                     return false;
-                                                } else if !(int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)) {
+                                                } else if !(int_in_range(Some(arg), 0, 35) || enum_in_list(Some(arg), &output_opt_reg)) {
                                                     return false;
                                                 }
                                             }
@@ -254,7 +289,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                                             for (idx, arg) in args.iter().enumerate() {
                                                 if idx > 3 {
                                                     return false;
-                                                } else if !(int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &output_opt_reg)) {
+                                                } else if !(int_in_range(Some(arg), 0, 35) || enum_in_list(Some(arg), &output_opt_reg)) {
                                                     return false;
                                                 }
                                             }
@@ -263,12 +298,56 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
                                     } else {false}
                                 },
                             }
-                        }
-                        // TODO: This one section of /config/routing is not finished
+                        },
                         Some(&"OUT") => {
+                            let valid_opt_first_half = [
+                                "AN1-4", "AN9-12", "AN17-20", "AN25-28",
+                                "A1-4", "A9-12", "A17-20", "A25-28", "A33-36", "A41-44",
+                                "B1-4", "B9-12", "B17-20", "B25-28", "B33-36", "B41-44",
+                                "CARD1-4", "CARD9-12", "CARD17-20", "CARD25-28",
+                                "OUT1-4", "OUT9-12",
+                                "P161-4", "P169-12",
+                                "AUX/CR", "AUX/TB",
+                                "UOUT1-4", "UOUT9-12", "UOUT17-20", "UOUT25-28", "UOUT33-36", "UOUT41-44",
+                                "UIN1-4", "UIN9-12", "UIN17-20", "UIN25-28",
+                            ];
+
+                            let valid_opt_sec_half = [
+                                "AN5-8", "AN13-16", "AN21-24", "AN29-32",
+                                "A5-8", "A13-16", "A21-24", "A29-32", "A37-40", "A45-48",
+                                "B5-8", "B13-16", "B21-24", "B29-32", "B37-40", "B45-48",
+                                "CARD5-8", "CARD13-16", "CARD21-24", "CARD29-32",
+                                "OUT5-8", "OUT13-16",
+                                "P165-8", "P1613-16",
+                                "AUX/CR", "AUX/TB",
+                                "UOUT5-8", "UOUT13-16", "UOUT21-24", "UOUT29-32", "UOUT37-40", "UOUT45-48",
+                                "UIN5-8", "UIN13-16", "UIN21-24", "UIN29-32",
+                            ];
+
                             match addr_tokens.get(3) {
+                                Some(val) if ["1-4", "9-12"].contains(val) => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &valid_opt_first_half)))
+                                },
+                                Some(val) if ["5-8", "13-16"].contains(val) => {
+                                    !check_args || (args.len() == 1 && (int_in_range(args.get(0), 0, 35) || enum_in_list(args.get(0), &valid_opt_sec_half)))
+                                },
                                 Some(_) => {false},
-                                None => {false},
+                                None => {
+                                    if allow_node_addrs {
+                                        if check_args {
+                                            for (idx, arg) in args.iter().enumerate() {
+                                                if idx > 3 {
+                                                    return false;
+                                                } else if idx % 2 == 0 && !(int_in_range(Some(arg), 0, 35) || enum_in_list(Some(arg), &valid_opt_first_half)) {
+                                                    return false;
+                                                } else if !(int_in_range(Some(arg), 0, 35) || enum_in_list(Some(arg), &valid_opt_sec_half)) {
+                                                    return false;
+                                                }
+                                            }
+                                            true
+                                        } else {true}
+                                    } else {false}
+                                },
                             }
                         },
                         Some(_) => {false},
@@ -283,6 +362,7 @@ fn validate_msg(addr: &String, args: &Vec<OscType>, check_args: bool, allow_node
         Some(&"outputs") => {
             match addr_tokens.get(1) {
                 Some(&"main") => {
+                    let out_range = (0 ..= 48).map(|x| two_digit_string(x)).collect::<Vec<String>>();
                     false
                 },
                 Some(&"aux") => {
@@ -317,11 +397,12 @@ fn enum_in_list(arg: Option<&OscType>, list: &[&str]) -> bool {
 
 /// Converts a standard X32 command into a node style command so that it will be acknowledged when
 /// sent to the X32 console rather than being silently accepted.
+
 fn make_node_cmd(msg: OscMessage) -> Result<X32OscMessage, CommandError> {
     if msg.args.len() >= 1 {
         let mut node_string = String::from("");
 
-        node_string.push_str(&msg.addr);
+        node_string.push_str(&msg.addr[1..]);
 
         for arg in msg.args {
             match arg {
