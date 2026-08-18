@@ -95,6 +95,8 @@ div.tab-bar {
 
 div.tab-content {
   flex: 1;
+  min-height: 0;
+
   width: 100%;
   background-color: colors.$background-light;
   padding: 20px;

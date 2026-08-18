@@ -4,8 +4,8 @@
   import PatchGrid from "../grids/PatchGrid.vue";
 
   let inTabs = [
-    {name: "Main", len: 32},
-    {name: "Aux", len: 6},
+    {name: "In", len: 32},
+    {name: "Aux In", len: 6},
   ];
 
   let inSections = [
