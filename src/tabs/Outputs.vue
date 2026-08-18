@@ -3,7 +3,7 @@
 </script>
 
 <template>
-  Outputs Page!
+  Outputs Page!!
 </template>
 
 <style scoped lang="scss">

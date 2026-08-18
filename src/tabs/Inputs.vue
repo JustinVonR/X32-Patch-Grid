@@ -1,23 +1,26 @@
 <script setup>
   import {ref} from "vue";
-
   import {invoke} from '@tauri-apps/api/core';
+  import PatchGrid from "../grids/PatchGrid.vue";
 
-  let addr = ref("")
+  let inTabs = [
+    {name: "Main", len: 32},
+    {name: "Aux", len: 6},
+  ];
 
-  async function request() {
-    try {
-      await invoke('fetch', {address: addr.value})
-    } catch (err) {
-      console.log(err);
-    }
-  }
+  let inSections = [
+    {name: "Local", len: 32},
+    {name: "AES50-A", len: 48},
+    {name: "AES50-B", len: 48},
+    {name: "Card", len: 32},
+    {name: "Aux", len: 6},
+    {name: "Talkback", len: 2},
+  ];
+
 </script>
 
 <template>
-  Inputs Page!<br/>
-  <!--TODO: This is a temporary test, remove it when adding final UI-->
-  <input type="text" v-model="addr" placeholder="type a command..."><button @click="request">Request</button>
+  <PatchGrid :tabs="inTabs" :sections="inSections"></PatchGrid>
 </template>
 
 <style scoped lang="scss">

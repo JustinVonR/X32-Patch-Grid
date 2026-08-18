@@ -15,32 +15,42 @@
 </script>
 
 <template>
-  <div class="tab-bar">
-    <div
-        v-for="(title, index) in tabs"
-        @click="switchTab(index)"
-        :class="{active: (activeTabIdx === index), tab: true}">
-      {{title}}
+  <div class="tabbed-display">
+    <div class="tab-bar">
+      <div
+          v-for="(title, index) in tabs"
+          @click="switchTab(index)"
+          :class="{active: (activeTabIdx === index), tab: true}">
+        {{title}}
+      </div>
+      <div class="status">
+        <StatusIndicator />
+      </div>
     </div>
-    <div class="status">
-      <StatusIndicator />
+    <div class="tab-content">
+      <Inputs v-if="tabs[activeTabIdx] === 'Inputs'" />
+      <Outputs v-if="tabs[activeTabIdx] === 'Outputs'" />
+      <Setup v-if="tabs[activeTabIdx] === 'Setup'" />
     </div>
-  </div>
-  <div class="tab-content">
-    <Inputs v-if="tabs[activeTabIdx] === 'Inputs'" />
-    <Outputs v-if="tabs[activeTabIdx] === 'Outputs'" />
-    <Setup v-if="tabs[activeTabIdx] === 'Setup'" />
   </div>
 </template>
 
 <style scoped lang="scss">
 @use "./styles/colors";
 
+div.tabbed-display {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
 div.tab-bar {
   display: flex;
   flex-direction: row;
-  width: 100vw;
+  flex-shrink: 0;
+  width: 100%;
   padding: 8px 12px 0 12px;
+  overflow: hidden;
 
   div.tab {
     background-color: colors.$tab-bg;
@@ -62,7 +72,7 @@ div.tab-bar {
     background-color: colors.$tab-bg-active;
     margin-bottom: 0;
     padding: 6px 20px 10px 20px;
-    border-radius: 0.7vh 0.7vh 0 0;
+    border-radius: 8px 8px 0 0;
     box-shadow: none;
   }
 
@@ -78,12 +88,14 @@ div.tab-bar {
   div.status {
     margin-left: auto;
     align-content: center;
+    text-wrap: nowrap;
+    overflow: hidden;
   }
 }
 
 div.tab-content {
-  height: 90%;
-  width: 100vw;
+  flex: 1;
+  width: 100%;
   background-color: colors.$background-light;
   padding: 20px;
 }
