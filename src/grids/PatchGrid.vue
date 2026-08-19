@@ -213,7 +213,7 @@ import {onMounted, onUpdated, ref} from "vue";
   }
 
   div.section-header {
-    background-color: #1c1c1c;
+    background-color: #232323;
     color: #606060;
     padding: 4px 12px 4px 12px;
     margin-right: auto;
@@ -221,7 +221,7 @@ import {onMounted, onUpdated, ref} from "vue";
     max-width: fit-content;
     height: 30px;
     border-radius: 5px 5px 0 0;
-    transition: 0.2s;
+    transition: filter 0.2s;
 
     &.open {
       background-color: #404040;
