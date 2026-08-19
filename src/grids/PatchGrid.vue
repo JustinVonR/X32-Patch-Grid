@@ -64,6 +64,7 @@ import {onMounted, onUpdated, ref} from "vue";
           <div class="section-nums">
             <div
                 v-for="i in props.sections[idx].len"
+                :class="{'last': (i === props.sections[idx].len)}"
             >{{ i }}</div>
           </div>
         </div>
@@ -88,12 +89,17 @@ import {onMounted, onUpdated, ref} from "vue";
 <style scoped lang="scss">
   @use "../styles/colors";
 
+  div.grid-wrapper {
+    min-height: fit-content;
+  }
+
   div.grid-tabs {
     display: flex;
     flex-direction: row-reverse;
     padding-bottom: 40px;
     writing-mode: vertical-lr;
     transform: rotate(180deg);
+    min-height: fit-content;
   }
 
   div.grid-tab {
@@ -146,6 +152,7 @@ import {onMounted, onUpdated, ref} from "vue";
     z-index: 5;
     position: sticky;
     left: 0;
+    height: fit-content;
   }
 
   div.corner-fill {
@@ -169,6 +176,7 @@ import {onMounted, onUpdated, ref} from "vue";
 
   div.grid-section {
     margin-right: 4px;
+    height: fit-content;
   }
 
   div.section-back {
@@ -192,18 +200,16 @@ import {onMounted, onUpdated, ref} from "vue";
     &.first {
       border-left: none;
     }
+
   }
 
   div.section-nums {
     display: flex;
     flex-direction: row;
-    border-right: 2px solid colors.$background-light;
 
     div {
       height: 30px;
-      min-height: 30px;
       width: 30px;
-      min-width: 30px;
       text-align: center;
       vertical-align: middle;
       background-color: colors.$background-light;
@@ -212,6 +218,11 @@ import {onMounted, onUpdated, ref} from "vue";
       font-size: 10pt;
       color: colors.$outline;
       padding-top: 3px;
+
+      &.last {
+        width: 32px;
+        border-right: 2px solid colors.$background-light;
+      }
     }
   }
 

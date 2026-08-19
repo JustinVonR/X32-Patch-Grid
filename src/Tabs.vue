@@ -100,5 +100,7 @@ div.tab-content {
   width: 100%;
   background-color: colors.$background-light;
   padding: 20px;
+
+  overflow: auto;
 }
 </style>
