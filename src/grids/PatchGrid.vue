@@ -6,6 +6,7 @@ import {onMounted, onUpdated, ref} from "vue";
 
   let tabStartIds = ref([1]);
   let sectionStartIds = ref([1]);
+  let sectionsActive = ref([])
   let rowLabelWidth = ref(100);
 
   onMounted(() => {
@@ -15,6 +16,10 @@ import {onMounted, onUpdated, ref} from "vue";
 
     for (let i = 1; i < props.sections.length; i++) {
       sectionStartIds.value.push(sectionStartIds.value[i - 1] + props.sections[i - 1].len);
+    }
+
+    for (let i = 0; i < props.sections.length; i++) {
+      sectionsActive.value.push(1);
     }
 
     updateStickyPos()
@@ -32,6 +37,14 @@ import {onMounted, onUpdated, ref} from "vue";
 
   function updateStickyPos() {
     rowLabelWidth.value = corner.value.clientWidth;
+  }
+
+  function toggleSection(idx) {
+    if (sectionsActive.value[idx] === 1) {
+      sectionsActive.value[idx] = 0;
+    } else {
+      sectionsActive.value[idx] = 1;
+    }
   }
 
 </script>
@@ -60,12 +73,22 @@ import {onMounted, onUpdated, ref} from "vue";
           class="grid-section"
       >
         <div class="section-back">
-          <div :class="{'section-header': true, 'first': (idx === 0)}" :style="{ 'position': 'sticky', 'left': rowLabelWidth + 'px'}">{{ section.name }}</div>
-          <div class="section-nums">
+          <div
+              :class="{
+                  'section-header': true,
+                  'first': (idx === 0),
+                  'open': (sectionsActive[idx] === 1)}"
+              :style="{ 'position': 'sticky', 'left': rowLabelWidth + 'px'}"
+              @click="toggleSection(idx)"
+          >{{ section.name }}</div>
+          <div v-if="sectionsActive[idx] === 1" class="section-nums">
             <div
-                v-for="i in props.sections[idx].len"
-                :class="{'last': (i === props.sections[idx].len)}"
+                v-for="i in section.len"
+                :class="{'last': (i === section.len)}"
             >{{ i }}</div>
+          </div>
+          <div v-else class="closed-section-label">
+            1 - {{ section.len }}
           </div>
         </div>
         <div class="patch-section">
@@ -75,8 +98,13 @@ import {onMounted, onUpdated, ref} from "vue";
                 v-for="i in props.tabs[activeTabIdx].len"
               >
                 <td
-                    v-for="j in props.sections[idx].len"
+                    v-if="sectionsActive[idx] === 1"
+                    v-for="j in section.len"
                 ></td>
+                <td
+                    v-else
+                    class="closed"
+                >...</td>
               </tr>
             </tbody>
           </table>
@@ -185,19 +213,29 @@ import {onMounted, onUpdated, ref} from "vue";
   }
 
   div.section-header {
-    background-color: colors.$background-light;
+    background-color: #1c1c1c;
+    color: #606060;
     padding: 4px 12px 4px 12px;
     margin-right: auto;
-    text-overflow: ellipsis;
     text-wrap: nowrap;
     max-width: fit-content;
     height: 30px;
     border-radius: 5px 5px 0 0;
+    transition: 0.2s;
+
+    &.open {
+      background-color: #404040;
+      color: colors.$text;
+    }
+
+    &:hover {
+      filter: brightness(130%);
+      cursor: pointer;
+    }
 
     &.first {
       border-left: none;
     }
-
   }
 
   div.section-nums {
@@ -205,8 +243,9 @@ import {onMounted, onUpdated, ref} from "vue";
     flex-direction: row;
 
     div {
+      flex: 1;
       height: 30px;
-      width: 30px;
+      min-width: 30px;
       text-align: center;
       vertical-align: middle;
       background-color: colors.$background-light;
@@ -217,10 +256,22 @@ import {onMounted, onUpdated, ref} from "vue";
       padding-top: 3px;
 
       &.last {
-        width: 32px;
+        min-width: 32px;
         border-right: 2px solid colors.$background-light;
       }
     }
+  }
+
+  div.closed-section-label {
+    height: 30px;
+    text-align: center;
+    vertical-align: middle;
+    background-color: #1c1c1c;
+    color: #606060;
+    z-index: 2;
+    font-size: 10pt;
+    padding: 3px 12px 0 12px;
+    width: 100%;
   }
 
   div.patch-section {
@@ -229,6 +280,8 @@ import {onMounted, onUpdated, ref} from "vue";
       background-color: colors.$background-mid;
       border-collapse: collapse;
       border-spacing: 0;
+      width: 100%;
+
       tr {
         height: 30px;
         min-height: 30px;
@@ -237,12 +290,24 @@ import {onMounted, onUpdated, ref} from "vue";
 
       td {
           width: 30px;
-          min-width: 30px;
           height: 100%;
           border-left: 2px solid colors.$background-light;
           text-align: center;
           font-size: 10pt;
           color: colors.$outline;
+
+          &:hover {
+            cursor: pointer;
+          }
+
+          &.closed {
+            width: 100%;
+            min-width: 0;
+            font-size: 15pt;
+            background-color: colors.$background-dark;
+            border: 2px solid colors.$background-mid;
+            cursor: auto;
+          }
       }
     }
   }
